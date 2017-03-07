@@ -73,7 +73,30 @@ struct Socket {
     }
 
 
+    static unsigned short getChecksum(iphdr *tcpHeader, pseudo_header *info, char *data = nullptr, size_t length = 0) {
+        char buf[sizeof(iphdr) + sizeof(pseudo_header) + 1024];
+        memcpy(buf + sizeof(pseudo_header), tcpHeader, sizeof(iphdr));
+        memcpy(buf, info, sizeof(pseudo_header));
+
+        memcpy(buf + sizeof(pseudo_header) + sizeof(pseudo_header), data, length);
+
+        return csum((unsigned short *) buf, sizeof(iphdr) + sizeof(pseudo_header) + length);
+    }
+
     static void sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort, int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin) {
+
+        // has to include ip header to allow sending from (source) other than 127.0.0.1
+        iphdr iph = {};
+        iph.ihl = 5;
+        iph.version = 4;
+        iph.tot_len = sizeof(iphdr) + sizeof(tcphdr);
+        iph.id = htonl(54321);
+        iph.ttl = 255;
+        iph.protocol = IPPROTO_TCP;
+        iph.saddr = networkSourceIp;
+        iph.daddr = networkDestIp;
+        iph.check = csum ((unsigned short *) &iph, sizeof(iphdr));
+
 
 
 
@@ -110,7 +133,13 @@ struct Socket {
         sin.sin_family = AF_INET;
         sin.sin_port = htons(hostDestPort);
         sin.sin_addr.s_addr = networkDestIp;
-        sendto(s, &newTcpHeader, sizeof(newTcpHeader), 0, (sockaddr *) &sin, sizeof(sin));
+
+
+        char buf[sizeof(iphdr) + sizeof(tcphdr)];
+        memcpy(buf, &iph, sizeof(iphdr));
+        memcpy(buf + sizeof(iphdr), &newTcpHeader, sizeof(tcphdr));
+
+        sendto(s, buf, sizeof(iphdr) + sizeof(tcphdr), 0, (sockaddr *) &sin, sizeof(sin));
     }
 
     // per socket data
@@ -141,6 +170,16 @@ struct TcpState {
 std::map<Endpoint, TcpState> sockets;
 
 
+void print_ip(int ip)
+{
+    unsigned char bytes[4];
+    bytes[0] = ip & 0xFF;
+    bytes[1] = (ip >> 8) & 0xFF;
+    bytes[2] = (ip >> 16) & 0xFF;
+    bytes[3] = (ip >> 24) & 0xFF;
+    printf("%d.%d.%d.%d\n", bytes[3], bytes[2], bytes[1], bytes[0]);
+}
+
 struct Tcp {
     std::set<uint32_t> inSynAckState;
 
@@ -150,6 +189,17 @@ struct Tcp {
             std::cout << "Cannot listen, run as root!" << std::endl;
             exit(-1);
         }
+
+
+        //IP_HDRINCL to tell the kernel that headers are included in the packet
+        int one = 1;
+        const int *val = &one;
+        if (setsockopt (s, IPPROTO_IP, IP_HDRINCL, val, sizeof (one)) < 0)
+        {
+            perror("Error setting IP_HDRINCL");
+            exit(0);
+        }
+
 
         char buf[1024];
 

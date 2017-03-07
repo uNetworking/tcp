@@ -7,11 +7,11 @@ int main (void)
     Tcp t;
 
     t.onConnection([](Socket *socket) {
-        std::cout << "[Connection] Connetions: " << ++connections << std::endl;
+        //std::cout << "[Connection] Connetions: " << ++connections << std::endl;
     });
 
     t.onDisconnection([](Socket *socket) {
-        std::cout << "[Disconnection] Connetions: " << --connections << std::endl;
+        //std::cout << "[Disconnection] Connetions: " << --connections << std::endl;
     });
 
     t.onData([](char *data, size_t length) {
