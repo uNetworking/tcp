@@ -7,7 +7,7 @@ Currently one "connection" (VERY limited) requires about 14 bytes of memory (no 
 
 As a comparison with BSD sockets, instead of requiring ~4gb of kernel space memory per 1 million connections, you can get by with less than 20mb of user space memory and 0 bytes of kernel space memory.
 
-```
+```c++
 #include "Tcp.h"
 
 int connections = 0;
