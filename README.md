@@ -5,6 +5,8 @@ This is an experimentation project with the goal of establishing TCP connections
 
 Currently one "connection" (VERY limited) requires about 14 bytes of memory (no kernel space memory needed). You can thus establish millions of connections using virtually no memory at all.
 
+As a comparison with BSD sockets, instead of requiring ~4gb of kernel space memory per 1 million connections, you can get by with less than 20mb of user space memory and 0 bytes of kernel space memory.
+
 ```
 #include "Tcp.h"
 
