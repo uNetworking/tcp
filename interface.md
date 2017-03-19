@@ -27,7 +27,10 @@ Context.onPeerReceived([](Package *package) {
 
 
 #### Received data is pushed directly to application code
-No per-socket receive buffers needed, ever
+No per-socket receive buffers needed in fast path / best case scenarios like single IP-packet TCP packets, or when data flows in order.
+
+* Will need buffers in worst case scenarios where tcp reassembly has holes
+* Could make use of a dynamic memory pool of fixed sized buffers to grow or shrink as needed, when needed
 * Can be useful to empty NIC reveice queue into per-context buffer though
 ```c++
 Context.onData([](Socket *socket, char *data, size_t length) {
