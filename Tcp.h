@@ -211,7 +211,7 @@ struct Tcp {
             tcphdr *tcpHeader = (tcphdr *) (buf + ipHeader->ihl * 4);
 
             // is this our port?
-            if (ntohs(tcpHeader->dest) == 3000) {
+            if (ntohs(tcpHeader->dest) == 4000) {
 
                 if (tcpHeader->syn) {
 
