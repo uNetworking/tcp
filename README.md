@@ -1,5 +1,4 @@
-# tcp
-#### Proof-of-concept TCP implementation with no (fix) per-socket buffers.
+## Proof-of-concept TCP implementation with no (fix) per-socket buffers.
 
 This is an experimentation project with the goal of establishing TCP connections with no fix buffers attached. Instead of implementing the BSD/epoll interfaces (which require big per-socket buffers) this experimentation implementation makes use of immediate callbacks to pass data to application level. This allows (according to hypothesis) very lightweight connections, only a few bytes each.
 
