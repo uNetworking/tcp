@@ -1,0 +1,125 @@
+so the idea goes (and I don't want to reiterate too much)
+BSD sockets are pretty okay designed
+but like said, they aim for worst case
+having a fix buffer on every socket
+my idea is that, yes, you will need buffers on many sockets
+but considering idle sockets, sockets that often send small messages that are VERY likely to only require one single Ip packet
+and the fact that many connections will simply have random behavior
+
+Alex Hultman @alexhultman 15:42
+there is almost an impossibility of requiring 100% buffer-to-socket ALL THE TIME
+so the key is: share these buffers when you can
+so instead of having one buffer per socket, you allocate a new buffer every time a socket needs it, and free it when it doesn't need it
+BUT: allocation cost
+so: you keep a chache of buffers
+a dynamically updated cache
+a linked list of free buffers to pick
+every time you hit a "cache miss" you allocate a new buffer and insert it to the linked list
+
+Víctor M. González @Helios-vmg 15:44
+What?
+You only keep "released" buffers in the "cache".
+
+Alex Hultman @alexhultman 15:44
+yes
+
+Víctor M. González @Helios-vmg 15:44
+If you miss, you don't add it to the list. You just return it immediately.
+
+Alex Hultman @alexhultman 15:44
+but you dynamically shrink the cache demanding on "pressure"
+yes of course, but then when you "release it" you instead put it back in the cache
+I just simplified the explanation a bit
+and when you have too many buffers in the cache
+you shink i
+shrink it
+dynamically based on some kind of statistics
+
+Víctor M. González @Helios-vmg 15:46
+I wouldn't even bother shrinking.
+
+Alex Hultman @alexhultman 15:46
+for instance, if you often have cache hits, but often leave the cache with many buffers just lying there, then reduce the cache size
+but you have to shrink according to some simple algorithm otherwise with time you will have as bad memory usage as BSD sockets
+but yes, shrinking is not very important
+
+Víctor M. González @Helios-vmg 15:46
+Nah, you won't.
+
+Alex Hultman @alexhultman 15:47
+but it has to be done at a low prio
+
+Víctor M. González @Helios-vmg 15:47
+The memory usage is necessarily bounded.
+
+Alex Hultman @alexhultman 15:47
+but you like the general idea? it SHOULD statistically reduce the memory usage ALOT
+the probability of EVERY socket needing a buffer AT THE SAME TIME is very low
+for instance, all of my messages in this gitter probably fit in one single IP packet
+so my socket in this case would very rarely need a buffer
+so if we consider Gitter
+like 60% of all messages would not need a buffer
+
+Víctor M. González @Helios-vmg 15:49
+You only need to allocate when you detect that buffers are coming in out-of-order, which is easy to detect.
+
+Alex Hultman @alexhultman 15:49
+and since EVERY socket is not sending messages ALL THE TIME, that 60% gets multiplied with the probability of 1 socket sending data
+yep
+exactly
+so you only need memroy in WORST CASE
+and worst case is very likely to happen more rare than 100%
+
+Víctor M. González @Helios-vmg 15:50
+Even if a message requires multiple packets, the receiving socket doesn't need to allocate temporary buffers for them if they come in order.
+
+Alex Hultman @alexhultman 15:50
+exactly
+even lower chances
+so look, you multiply the probabilities
+if we have a chance of a socket receiving data
+0.9 say
+and the chance of it coming out of order
+0.5 say
+you get 0.45
+so the chances only decrease the more you take into account
+BSD sockets are designed for "lets assume ALL sockets receive data ALL THE TIME and ALL packages has to be reassembled"
+
+Víctor M. González @Helios-vmg 15:52
+it doesn't even matter. Like I said, the memory usage is bounded either way, independently of the number of sockets open.
+The memory usage is bounded by the link's bandwidth.
+
+Alex Hultman @alexhultman 15:52
+AH!
+I get it
+yeah of course!
+hmmm, no?
+or well, yeah if you have some kind of timeout before an unfinished tcp reassembly drops the connection
+you can receive 5 million incomplete tcp reassemblies so in worst case scenario it can still be bound to the number of connections
+unless they timeout very quickly
+but yes, there is a MAJOR chance that memory usage will be very much improved
+and even in worst case scenarios, this desgin shouldn't require more than BSD sockets do anyways
+
+Víctor M. González @Helios-vmg 15:57
+Assuming non-malicious network traffic, the probability is that a TCP transmission that gotten disordered will become ordered (and completed) within a time span that's dependent on the link's bandwidth.
+The only way for the memory usage to explode is for a significant number of sockets to simultaneously receive very long and disordered TCP sends.
+The faster the link, the shorter amount of time a single send can stay disordered, but also the more sockets that can receive simultaneously. So it kinda balances out.
+
+Alex Hultman @alexhultman 16:01
+yep
+you think it will work then?
+I'm already 100% sure it will work
+
+Víctor M. González @Helios-vmg 16:01
+Really, the only way it'll happen is if you have a billion sockets open to hosts which are all controlled by a single attacker who wants to send TCP packets in reverse order.
+That's pretty much the worst-case scenario.
+
+Alex Hultman @alexhultman 16:02
+yes so it all comes back to optimizing for best case, not for worse case
+servers should be optimized for best case scenarios and fall back to slower behavior if the HAVE TO
+
+Víctor M. González @Helios-vmg 16:03
+Yeah, basically. With OS sockets you wouldn't even be able to open that many connections anyway.
+
+Alex Hultman @alexhultman 16:03
+you don't bike to work with a parachute
