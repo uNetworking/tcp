@@ -1,4 +1,4 @@
-## Proof-of-concept TCP implementation with no (fix) per-socket buffers.
+## Experimental microscopic TCP implementation
 
 This is an experimentation project with the goal of establishing TCP connections with no fix buffers attached. Instead of implementing the BSD/epoll interfaces (which require big per-socket buffers) this experimentation implementation makes use of immediate callbacks to pass data to application level. This allows (according to hypothesis) very lightweight connections, only a few bytes each.
 
@@ -8,6 +8,32 @@ As a comparison with BSD sockets, instead of requiring ~4gb of kernel space memo
 
 Memory usage becomes a product of network problematics, rather than a product of number of connections (memory is only needed in worst case scenarios, like when TCP chunks come out-of-order and need a TCP-reassembly buffer). All buffers are shared to statistically minimze memory usage. If memory is scarce, IP packets are dropped and resent later on (according to spec).
 
+## Overview
+```c++
+#include "Tcp.h"
+
+int connections = 0;
+
+int main () {
+    IP ip;
+    Tcp t(ip, 4000);
+
+    t.onConnection([](Socket *socket) {
+        std::cout << "[Connection] Connetions: " << ++connections << std::endl;
+    });
+
+    t.onDisconnection([](Socket *socket) {
+        std::cout << "[Disconnection] Connetions: " << --connections << std::endl;
+    });
+
+    t.onData([](Socket *socket, char *data, size_t length) {
+        std::cout << "Received data: " << std::string(data, length) << std::endl;
+        socket->send(data, length);
+    });
+
+    t.run();
+}
+```
 ## Design goals
 These are initial design goals for the TCP stack targeting minimal memory usage and high throughput
 
