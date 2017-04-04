@@ -123,45 +123,7 @@ struct Socket {
     }
 
     static void sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
-                           int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin, bool flagRst, char *data, size_t length) {
-
-        IpHeader *ipHeader = globalIP->getIpPacketBuffer();
-        memset(ipHeader, 0, sizeof(iphdr));
-
-        ipHeader->ihl = 5;
-        ipHeader->version = 4;
-        ipHeader->tot_len = htons(sizeof(iphdr) + sizeof(tcphdr) + length);
-        ipHeader->id = htonl(54321);
-        ipHeader->ttl = 255;
-        ipHeader->protocol = IPPROTO_TCP;
-        ipHeader->saddr = networkSourceIp;
-        ipHeader->daddr = networkDestIp;
-        //ipHeader->check = csum_continue(0, (char *) ipHeader, sizeof(iphdr));
-
-        TcpHeader *tcpHeader = (TcpHeader *) ipHeader->getData();
-        memset(tcpHeader, 0, sizeof(tcphdr));
-
-        tcpHeader->ack = flagAck;
-        tcpHeader->syn = flagSyn;
-        tcpHeader->fin = flagFin;
-        tcpHeader->rst = flagRst;
-        if (data) {
-            tcpHeader->psh = true;
-            memcpy(((char *) tcpHeader) + sizeof(tcphdr), data, length);
-        }
-
-        tcpHeader->ack_seq = htonl(hostAck);
-        tcpHeader->seq = htonl(hostSeq);
-        tcpHeader->source = htons(hostSourcePort);
-        tcpHeader->dest = htons(hostDestPort);
-
-        // todo
-        tcpHeader->doff = 5; // 5 * 4 = 20 bytes
-        tcpHeader->window = htons(43690);
-
-        tcpHeader->check = csum_continue(getPseudoHeaderSum(networkSourceIp, networkDestIp, htons(sizeof(tcphdr) + length))
-                                         , (char *) tcpHeader, sizeof(tcphdr) + length);
-    }
+                           int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin, bool flagRst, char *data, size_t length);
 
     void send(char *data, size_t length) {
         sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, 4000, true, false, false, false, data, length);
@@ -212,7 +174,15 @@ inline bool operator<(const Endpoint a, const Endpoint b) {
 }
 
 struct Tcp {
+    // accepting state
     std::set<uint32_t> inSynAckState;
+
+    // connecting state (client seq, client port)
+    std::set<std::pair<uint32_t, uint16_t>> inSynState;
+
+    // established
+    std::map<Endpoint, Socket *> sockets;
+
     IP *ip;
     int port;
 
@@ -220,7 +190,7 @@ struct Tcp {
         globalIP = ip;
     }
 
-    std::map<Endpoint, Socket *> sockets;
+    void connect(char *destination, void *userData);
 
     void dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader);
 
@@ -230,7 +200,7 @@ struct Tcp {
             for (int i = 0; i < messages; i++) {
                 IpHeader *ipHeader = ip->getIpPacket(i);
                 TcpHeader *tcpHeader = (TcpHeader *) ipHeader->getData();
-                if (tcpHeader->getDestinationPort() == port) {
+                if (tcpHeader->getDestinationPort() == port || tcpHeader->getDestinationPort() == 4001) {
                     dispatch(ipHeader, tcpHeader);
                 }
             }
