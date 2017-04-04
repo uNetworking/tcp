@@ -115,7 +115,7 @@ void Tcp::connect(char *destination, void *userData)
 void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
 
     // lookup can be improved
-    Endpoint endpoint = {ipHeader->saddr, ntohs(tcpHeader->source), ipHeader->daddr};
+    Endpoint endpoint = {ipHeader->saddr, ntohs(tcpHeader->source), ipHeader->daddr, ntohs(tcpHeader->dest)};
 
     // does this connection exist?
     auto it = sockets.find(endpoint);
@@ -130,7 +130,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
         // syn-ack (client is done now)
         if (tcpHeader->ack) {
 
-            //std::cout << "CLIENT got SYN-ACK!" << std::endl;
+            std::cout << "CLIENT got SYN-ACK!" << std::endl;
 
             // assume this is our socket
 

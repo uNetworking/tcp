@@ -153,6 +153,7 @@ struct Endpoint {
     uint16_t hostPort;
 
     uint32_t networkDestinationIp;
+    uint16_t hostDestinationPort;
 };
 
 inline bool operator<(const Endpoint a, const Endpoint b) {
