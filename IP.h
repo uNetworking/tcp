@@ -17,7 +17,12 @@
 #include <netdb.h>
 #include <unistd.h>
 
+#include <netinet/ip.h>
+#include <sys/socket.h>
+#include <time.h>
+
 #include <iostream>
+#include <vector>
 
 enum {
     IP_ERR
@@ -50,14 +55,37 @@ struct IpHeader : iphdr {
 struct IP {
 
     int fd;
-    char *buffer;
+    char *buffer[500];
+    size_t length[500];
+    mmsghdr msgs[500];
+    iovec iovecs[500];
+
+    iovec messages[500];
+
+    char *outBuffer[500];
+    int queuedBuffersNum = 0;
 
     IP() {
         fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
         if (fd == -1) {
             throw IP_ERR;
         }
-        buffer = new char[1024 * 32];
+
+        for (int i = 0; i < 500; i++) {
+            buffer[i] = new char[1024 * 4];
+
+            outBuffer[i] = new char[1024 * 4];
+        }
+
+        const int VLEN = 500;
+
+        memset(msgs, 0, sizeof(msgs));
+        for (int i = 0; i < VLEN; i++) {
+            iovecs[i].iov_base         = buffer[i];
+            iovecs[i].iov_len          = 1024 * 4;
+            msgs[i].msg_hdr.msg_iov    = &iovecs[i];
+            msgs[i].msg_hdr.msg_iovlen = 1;
+        }
 
         int one = 1;
         const int *val = &one;
@@ -67,22 +95,24 @@ struct IP {
     }
 
     ~IP() {
-        delete [] buffer;
+        //delete [] buffer;
         close(fd);
     }
 
-    IpHeader *getNextIpPacket(int &length) {
-        length = recv(fd, buffer, 1024 * 32, 0);
-        return (IpHeader *) buffer;
+    void releasePackageBatch();
+    int fetchPackageBatch() {
+        return recvmmsg(fd, msgs, 500, MSG_WAITFORONE, nullptr);
     }
 
-    void writeIpPacket(IpHeader *ipHeader, int length, uint16_t hostDestPort, uint32_t networkDestIp) {
-        sockaddr_in sin;
-        sin.sin_family = AF_INET;
-        sin.sin_port = htons(hostDestPort);
-        sin.sin_addr.s_addr = networkDestIp;
+    IpHeader *getIpPacket(int index) {
+        return (IpHeader *) iovecs[index].iov_base;
+    }
 
-        sendto(fd, ipHeader, length, 0, (sockaddr *) &sin, sizeof(sin));
+    IpHeader *getIpPacketBuffer() {
+        if (queuedBuffersNum == 500) {
+            releasePackageBatch();
+        }
+        return (IpHeader *) outBuffer[queuedBuffersNum++];
     }
 };
 
