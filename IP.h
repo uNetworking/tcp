@@ -52,9 +52,11 @@ struct IpHeader : iphdr {
     }
 };
 
+#include <linux/if_ether.h>
+
 struct IP {
 
-    int fd;
+    int fd, fd_send;
     char *buffer[500];
     size_t length[500];
     mmsghdr msgs[500];
@@ -66,7 +68,12 @@ struct IP {
     int queuedBuffersNum = 0;
 
     IP() {
-        fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+        // receive
+        fd = socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_IP));
+
+        // send (move over to packet socket later)
+        fd_send = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+
         if (fd == -1) {
             throw IP_ERR;
         }
@@ -85,12 +92,6 @@ struct IP {
             iovecs[i].iov_len          = 1024 * 4;
             msgs[i].msg_hdr.msg_iov    = &iovecs[i];
             msgs[i].msg_hdr.msg_iovlen = 1;
-        }
-
-        int one = 1;
-        const int *val = &one;
-        if (setsockopt (fd, IPPROTO_IP, IP_HDRINCL, val, sizeof (one)) < 0) {
-            throw IP_ERR;
         }
     }
 

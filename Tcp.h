@@ -126,13 +126,17 @@ struct Socket {
                            int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin, bool flagRst, char *data, size_t length);
 
     void send(char *data, size_t length) {
-        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, 4000, true, false, false, false, data, length);
+        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
         hostSeq += length;
     }
 
-    // RST (is this blocked by the kernel?)
     void terminate() {
-        //sendPacket(hostSeq, hostAck, networkIp, 0, hostPort, 4000, false, false, false, true, nullptr, 0);
+        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, false, false, false, true, nullptr, 0);
+    }
+
+    void shutdown() {
+        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, false, false, true, false, nullptr, 0);
+        hostSeq++;
     }
 
     void *userData;
@@ -143,9 +147,13 @@ struct Socket {
 
     // this is OUR IP!
     uint32_t networkDestinationIp;
+    uint16_t hostDestinationPort;
 
     uint32_t hostAck;
     uint32_t hostSeq;
+
+    // do not ack closed sockets?
+    //bool closed = false;
 };
 
 struct Endpoint {

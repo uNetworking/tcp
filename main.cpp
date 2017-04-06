@@ -12,19 +12,31 @@ int connections = 0;
 
 int received = 0;
 
+// drop all TCP input on port 4000
+// sudo iptables -A INPUT -p tcp --destination-port 4000 -j DROP
+
+int packets = 0;
+
 int main (void)
 {
     IP ip; //swappable IP driver - add test IP driver!
     Tcp t(&ip, 4000); //t.listen
 
+
+    // send(message, callback)
+    // och diverse liknande!
+    // callback är när den har blivit sänd, inte emottagen!
+    // samma som BSD, men meddelandet hålls kvar längre (allokering för varje send)
+
+    // callbacken har olika betydelse men är "ge mig mer data nu"
+
     t.onConnection([](Socket *socket) {
         std::cout << "[Connection] Connetions: " << ++connections << std::endl;
 
-        // called for both client and server sockets
-        socket->send("Hello over there!", 17);
-
-
-        // send tons of data here (both directions)
+        if (connections == 2) {
+            // server is last to get onConnection called so it will send
+            socket->send("Hello over there!", 17);
+        }
     });
 
     t.onDisconnection([](Socket *socket) {
@@ -34,18 +46,12 @@ int main (void)
     // socket->haltReceive
     t.onData([](Socket *socket, char *data, size_t length) {
         std::cout << "Received data: " << std::string(data, length) << std::endl;
-
-        if (received++ < 2) {
-            //socket->send("Thanks", 6);
-        }
-
-        /*socket->send("------\n", 7);
-        socket->send(data, length);
-        socket->send("------\n", 7);*/
+        socket->shutdown();
     });
 
     // t.listen() -> vector of ports in use
 
+    // client is connected first of all
     t.connect("127.0.0.1:4000", nullptr);
 
     t.run();
