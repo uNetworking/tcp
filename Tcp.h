@@ -126,7 +126,7 @@ struct Socket {
                            int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin, bool flagRst, char *data, size_t length);
 
     void send(char *data, size_t length) {
-        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, 4000, true, false, false, false, data, length);
+        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
         hostSeq += length;
     }
 
@@ -143,6 +143,7 @@ struct Socket {
 
     // this is OUR IP!
     uint32_t networkDestinationIp;
+    uint16_t hostDestinationPort;
 
     uint32_t hostAck;
     uint32_t hostSeq;

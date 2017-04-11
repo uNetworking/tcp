@@ -141,7 +141,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
 
             // create socket here (probably incorrect seq and ack )
 
-            Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, ack + 1, seq});
+            Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, tcpHeader->getDestinationPort(), ack + 1, seq});
             sockets[endpoint] = socket;
             onconnection(socket);
             //inSynAckState.erase(htonl((seq - 1)));
@@ -187,7 +187,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
 
             // map from ip and port to ack and seq
             if (inSynAckState.find(htonl((seq - 1))) != inSynAckState.end()) {
-                Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, ack, seq});
+                Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, tcpHeader->getDestinationPort(), ack, seq});
                 sockets[endpoint] = socket;
                 onconnection(socket);
                 inSynAckState.erase(htonl((seq - 1)));
