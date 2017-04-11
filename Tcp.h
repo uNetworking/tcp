@@ -127,6 +127,10 @@ struct Socket {
 
     void send(char *data, size_t length) {
         sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
+
+        // duplicate
+        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
+
         hostSeq += length;
     }
 

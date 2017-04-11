@@ -199,6 +199,8 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
     int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->doff * 4) - (ipHeader->ihl * 4);
     if (tcpdatalen) {
 
+
+
         char *buf = (char *) ipHeader;
 
         if (!socket) {
@@ -215,9 +217,20 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
             return;
         }
 
+        // is this segment out of sequence?
+        if (socket->hostAck != ntohl(tcpHeader->seq)) {
+
+            if (socket->hostAck > ntohl(tcpHeader->seq)) {
+                std::cout << "INFO: Received duplicate TCP data segment, dropping" << std::endl;
+            } else {
+                // here we need to buffer up future segments until prior segments come in!
+
+                std::cout << "WARNING: Received out-of-order TCP segment, should buffer but will drop for now" << std::endl;
+            }
+            return;
+        }
 
         socket->hostAck += tcpdatalen;
-
         uint32_t lastHostSeq = socket->hostSeq;
         ondata(socket, buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
         // no data sent, need to send ack!
