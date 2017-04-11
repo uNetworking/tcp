@@ -1,49 +1,5 @@
 #include "Tcp.h"
 
-void IP::releasePackageBatch() {
-
-    if (queuedBuffersNum) {
-        mmsghdr sendVec[500] = {};
-        sockaddr_in sin[500] = {};
-
-        int packages = queuedBuffersNum;
-
-        for (int i = 0; i < queuedBuffersNum; i++) {
-
-            IpHeader *ipHeader = (IpHeader *) outBuffer[i];
-            TcpHeader *tcpHeader = (TcpHeader *) ipHeader->getData();
-
-            int length = ipHeader->getTotalLength();
-
-            sin[i].sin_family = AF_INET;
-            sin[i].sin_port = tcpHeader->dest;
-            sin[i].sin_addr.s_addr = ipHeader->daddr;
-
-            messages[i].iov_base = ipHeader;
-            messages[i].iov_len = length;
-
-            // send out of order!
-            sendVec[i].msg_hdr.msg_iov = &messages[packages - i - 1];
-            sendVec[i].msg_hdr.msg_iovlen = 1;
-
-            sendVec[i].msg_hdr.msg_name = &sin[packages - i - 1];
-            sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
-
-//            sendVec[i].msg_hdr.msg_iov = &messages[i];
-//            sendVec[i].msg_hdr.msg_iovlen = 1;
-
-//            sendVec[i].msg_hdr.msg_name = &sin[i];
-//            sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
-
-        }
-
-        sendmmsg(fd, sendVec, queuedBuffersNum, 0);
-        queuedBuffersNum = 0;
-
-        //std::cout << "Sent now" << std::endl;
-    }
-}
-
 void Socket::sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
                        int hostSourcePort, bool flagAck, bool flagSyn, bool flagFin, bool flagRst, char *data, size_t length) {
 
@@ -84,8 +40,6 @@ void Socket::sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDest
     tcpHeader->check = csum_continue(getPseudoHeaderSum(networkSourceIp, networkDestIp, htons(sizeof(tcphdr) + length))
                                      , (char *) tcpHeader, sizeof(tcphdr) + length);
 }
-
-#include <sstream>
 
 // networkAddress, hostPort
 std::pair<uint32_t, unsigned int> networkAddressFromString(char *address) {
@@ -185,25 +139,26 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
 
             char *buf = (char *) ipHeader;
 
-            // is this segment out of sequence?
-            if (socket->hostAck != ntohl(tcpHeader->seq)) {
-
-                std::cout << socket->hostAck << " != " << ntohl(tcpHeader->seq) << std::endl;
-
-                if (socket->hostAck > ntohl(tcpHeader->seq)) {
-                    std::cout << "INFO: Received duplicate TCP data segment, dropping" << std::endl;
-                } else {
-                    // here we need to buffer up future segments until prior segments come in!
-
-                    std::cout << "WARNING: Received out-of-order TCP segment, should buffer but will drop for now" << std::endl;
-
-                    std::cout << "Data was: " << std::string(buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen) << std::endl;
-                }
+            // drop packets randomly (sender should take care of this!)
+            if (rand() % 100 < 5) {
+                std::cout << "Dropping packet for fun" << std::endl;
                 return;
             }
 
-            if (socket->state != Socket::ESTABLISHED) {
-                std::cout << "Data on not established socket" << std::endl;
+            // is this segment out of sequence?
+            if (socket->hostAck != ntohl(tcpHeader->seq)) {
+                // drop everything wrong!
+                if (socket->hostAck > ntohl(tcpHeader->seq)) {
+                    // this can be a sign of an ACK we sent not being properly received
+                    while (true) {
+                        std::cout << "Dropping duplicate packet!" << std::endl;
+                        usleep(100);
+                    }
+                    return;
+                } else {
+                    std::cout << "Dropping out of sequence packet!" << std::endl;
+                    return;
+                }
             }
 
             socket->hostAck += tcpdatalen;

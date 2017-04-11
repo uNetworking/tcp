@@ -78,6 +78,6 @@ void testEcho() {
 }
 
 int main (void) {
-    testEcho();
+    //testEcho();
     testDownload();
 }

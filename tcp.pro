@@ -4,7 +4,8 @@ CONFIG -= app_bundle
 CONFIG -= qt
 
 SOURCES += main.cpp \
-    Tcp.cpp
+    Tcp.cpp \
+    IP.cpp
 
 HEADERS += \
     Tcp.h \
