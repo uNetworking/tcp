@@ -151,6 +151,13 @@ struct Socket {
 
     uint32_t hostAck;
     uint32_t hostSeq;
+
+    enum {
+        CLOSED,
+        SYN_ACK_SENT,
+        SYN_SENT,
+        ESTABLISHED
+    } state;
 };
 
 struct Endpoint {
@@ -180,13 +187,6 @@ inline bool operator<(const Endpoint a, const Endpoint b) {
 }
 
 struct Tcp {
-    // accepting state
-    std::set<uint32_t> inSynAckState;
-
-    // connecting state (client seq, client port)
-    std::set<std::pair<uint32_t, uint16_t>> inSynState;
-
-    // established
     std::map<Endpoint, Socket *> sockets;
 
     IP *ip;

@@ -29,6 +29,12 @@ void IP::releasePackageBatch() {
             sendVec[i].msg_hdr.msg_name = &sin[packages - i - 1];
             sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
 
+//            sendVec[i].msg_hdr.msg_iov = &messages[i];
+//            sendVec[i].msg_hdr.msg_iovlen = 1;
+
+//            sendVec[i].msg_hdr.msg_name = &sin[i];
+//            sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
+
         }
 
         sendmmsg(fd, sendVec, queuedBuffersNum, 0);
@@ -92,142 +98,136 @@ std::pair<uint32_t, unsigned int> networkAddressFromString(char *address) {
 
 void Tcp::connect(char *source, char *destination, void *userData)
 {
+    // these should return an Endpoint straight up
     auto sourceAddress = networkAddressFromString(source);
     auto destinationAddress = networkAddressFromString(destination);
 
-    uint32_t networkClientSeq = rand();
-    Socket::sendPacket(networkClientSeq, 0, destinationAddress.first, sourceAddress.first, destinationAddress.second, sourceAddress.second, false, true, false, false, nullptr, 0);
-    ip->releasePackageBatch();
+    Endpoint endpoint = {destinationAddress.first, destinationAddress.second, sourceAddress.first, sourceAddress.second};
 
-    // probably Endpoint?
-    inSynState.insert({networkClientSeq, sourceAddress.second});
+    uint32_t hostSeq = rand();
+    sockets[endpoint] = new Socket({nullptr, destinationAddress.first, destinationAddress.second, sourceAddress.first, sourceAddress.second, 0, hostSeq, Socket::SYN_SENT});
+
+    Socket::sendPacket(hostSeq, 0, destinationAddress.first, sourceAddress.first, destinationAddress.second, sourceAddress.second, false, true, false, false, nullptr, 0);
+    ip->releasePackageBatch();
 }
 
 void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
 
-    // lookup can be improved
+    // lookup associated socket
     Endpoint endpoint = {ipHeader->saddr, ntohs(tcpHeader->source), ipHeader->daddr, ntohs(tcpHeader->dest)};
-
-    // does this connection exist?
     auto it = sockets.find(endpoint);
-    Socket *socket = nullptr;
+
     if (it != sockets.end()) {
-        socket = it->second;
-    }
+        Socket *socket = it->second;
 
-    // connection begin handler
-    if (tcpHeader->syn) {
+        if (tcpHeader->fin) {
 
-        // syn-ack (client is done now)
-        if (tcpHeader->ack) {
+            ondisconnection(socket);
+            sockets.erase(endpoint);
 
-            std::cout << "CLIENT got SYN-ACK!" << std::endl;
-
-            // assume this is our socket
-
-            uint32_t ack = ntohl(tcpHeader->seq); // received ACK is one more than the SEQ we sent!
-            uint32_t seq = ntohl(tcpHeader->ack_seq); // this is the server's ACK!
-
-            Socket::sendPacket(seq, ack + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
-
-            // create socket here (probably incorrect seq and ack )
-
-            Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, tcpHeader->getDestinationPort(), ack + 1, seq});
-            sockets[endpoint] = socket;
-            onconnection(socket);
-            //inSynAckState.erase(htonl((seq - 1)));
+            // send fin, ack back
+            socket->hostAck += 1;
+            Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, true, false, nullptr, 0);
 
 
-        } else {
-            // cannot syn already established connection
-            if (socket) {
+        } else if (tcpHeader->ack) {
+
+            if (socket->state == Socket::ESTABLISHED) {
+                // why thank you
+            } else if (socket->state == Socket::SYN_ACK_SENT) {
+
+                // note: PSH, ACK with data can act as connection ACK (this is probably good)
+                // let's just not allow it for now
+                if (!tcpHeader->psh) {
+
+                    uint32_t seq = ntohl(tcpHeader->seq);
+                    uint32_t ack = ntohl(tcpHeader->ack_seq);
+
+                    if (socket->hostAck + 1 == seq && socket->hostSeq + 1 == ack) {
+                        socket->hostAck++;
+                        socket->hostSeq++;
+                        socket->state = Socket::ESTABLISHED;
+
+                        onconnection(socket);
+
+                        // empty eventual buffering hindered so far by the lower seq and ack numbers!
+
+                    } else {
+                        //std::cout << "Server ACK is wrong!" << std::endl;
+                    }
+
+                }
+
+            } else if (tcpHeader->syn && socket->state == Socket::SYN_SENT) {
+
+                uint32_t ack = ntohl(tcpHeader->ack_seq);
+
+                if (socket->hostSeq + 1 == ack) {
+
+                    uint32_t seq = ntohl(tcpHeader->seq);
+                    socket->hostSeq++;
+                    socket->hostAck = seq + 1;
+                    socket->state = Socket::ESTABLISHED;
+
+                    Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
+                    onconnection(socket);
+
+                    // can data be ready to dispatch here? Don't think so?
+                } else {
+                    std::cout << "CLIENT ACK IS WRONG!" << std::endl;
+                }
+            }
+        }
+
+        // data handler
+        int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->doff * 4) - (ipHeader->ihl * 4);
+        if (tcpdatalen) {
+
+            char *buf = (char *) ipHeader;
+
+            // is this segment out of sequence?
+            if (socket->hostAck != ntohl(tcpHeader->seq)) {
+
+                std::cout << socket->hostAck << " != " << ntohl(tcpHeader->seq) << std::endl;
+
+                if (socket->hostAck > ntohl(tcpHeader->seq)) {
+                    std::cout << "INFO: Received duplicate TCP data segment, dropping" << std::endl;
+                } else {
+                    // here we need to buffer up future segments until prior segments come in!
+
+                    std::cout << "WARNING: Received out-of-order TCP segment, should buffer but will drop for now" << std::endl;
+
+                    std::cout << "Data was: " << std::string(buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen) << std::endl;
+                }
                 return;
             }
 
-            // simply answer all syns
-            uint32_t hostSeq = rand();
-            inSynAckState.insert(htonl(hostSeq));
-            Socket::sendPacket(hostSeq, ntohl(tcpHeader->seq) + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, true, false, false, nullptr, 0);
+            if (socket->state != Socket::ESTABLISHED) {
+                std::cout << "Data on not established socket" << std::endl;
+            }
 
-            // no data in syn
-            return;
-        }
-        // disconnection handler
-    } else if (tcpHeader->fin) {
-
-        if (!socket) {
-            std::cout << "FIN for already closed socket!" << std::endl;
-            return;
-        }
-
-        ondisconnection(socket);
-        sockets.erase(endpoint);
-
-        // send fin, ack back
-        socket->hostAck += 1;
-        Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, true, false, nullptr, 0);
-
-        // connection complete handler
-    } else if (tcpHeader->ack) {
-
-        // if no socket, see if we can establish one!
-        if (!socket) {
-            // store ack and seq (tvärt om för oss)
-            uint32_t ack = ntohl(tcpHeader->seq);
-            uint32_t seq = ntohl(tcpHeader->ack_seq);
-
-            // map from ip and port to ack and seq
-            if (inSynAckState.find(htonl((seq - 1))) != inSynAckState.end()) {
-                Socket *socket = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, tcpHeader->getDestinationPort(), ack, seq});
-                sockets[endpoint] = socket;
-                onconnection(socket);
-                inSynAckState.erase(htonl((seq - 1)));
+            socket->hostAck += tcpdatalen;
+            uint32_t lastHostSeq = socket->hostSeq;
+            ondata(socket, buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
+            // no data sent, need to send ack!
+            if (lastHostSeq == socket->hostSeq) {
+                Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
             }
         }
-    }
+    } else if (tcpHeader->syn && !tcpHeader->ack) {
+        // client has sent us its initial (random) seq, we take that and store as our ack
 
-    // data handler
-    int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->doff * 4) - (ipHeader->ihl * 4);
-    if (tcpdatalen) {
+        // since we have a lower ack than any data segment, they will be properly queued
+        // up until we get client's ack and increase our ack by 1 (and then empty the buffers)
 
+        uint32_t hostAck = ntohl(tcpHeader->seq);
+        uint32_t hostSeq = rand();
+        sockets[endpoint] = new Socket({nullptr, ipHeader->saddr, tcpHeader->getSourcePort(), ipHeader->daddr, tcpHeader->getDestinationPort(), hostAck, hostSeq, Socket::SYN_ACK_SENT});
 
-
-        char *buf = (char *) ipHeader;
-
-        if (!socket) {
-
-            // if data before Syn,ACK sent back -> buffer up until?
-
-            // or simply pass it along?
-
-
-            std::cout << "DATA for already closed socket!" << std::endl;
-
-            std::cout << "DATA: " << std::string(buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen) << std::endl;
-
-            return;
-        }
-
-        // is this segment out of sequence?
-        if (socket->hostAck != ntohl(tcpHeader->seq)) {
-
-            if (socket->hostAck > ntohl(tcpHeader->seq)) {
-                std::cout << "INFO: Received duplicate TCP data segment, dropping" << std::endl;
-            } else {
-                // here we need to buffer up future segments until prior segments come in!
-
-                std::cout << "WARNING: Received out-of-order TCP segment, should buffer but will drop for now" << std::endl;
-            }
-            return;
-        }
-
-        socket->hostAck += tcpdatalen;
-        uint32_t lastHostSeq = socket->hostSeq;
-        ondata(socket, buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
-        // no data sent, need to send ack!
-        if (lastHostSeq == socket->hostSeq) {
-            Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
-        }
+        // we send one ack higher than the one we store!
+        Socket::sendPacket(hostSeq, hostAck + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, true, false, false, nullptr, 0);
+    } else {
+        std::cout << "Dropping uninvited packet" << std::endl;
     }
 }
 

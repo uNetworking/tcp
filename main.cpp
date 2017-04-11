@@ -45,8 +45,10 @@ void testEcho() {
         std::cout << "[Connection] Connetions: " << ++connections << std::endl;
 
         // called for both client and server sockets
-        socket->send("Hello over there!", 17);
-        socket->send("Hello over there?", 17);
+        if (connections == 1) {
+            socket->send("Hello over there!", 17);
+            socket->send("Hello over there?", 17);
+        }
 
         // send tons of data here (both directions)
     });
