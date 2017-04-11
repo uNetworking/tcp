@@ -31,7 +31,7 @@ void IP::releasePackageBatch() {
         sendmmsg(fd, sendVec, queuedBuffersNum, 0);
         queuedBuffersNum = 0;
 
-        std::cout << "Sent now" << std::endl;
+        //std::cout << "Sent now" << std::endl;
     }
 }
 
@@ -70,7 +70,7 @@ void Socket::sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDest
 
     // todo
     tcpHeader->doff = 5; // 5 * 4 = 20 bytes
-    tcpHeader->window = htons(43690);
+    tcpHeader->window = htons(65535);
 
     tcpHeader->check = csum_continue(getPseudoHeaderSum(networkSourceIp, networkDestIp, htons(sizeof(tcphdr) + length))
                                      , (char *) tcpHeader, sizeof(tcphdr) + length);
@@ -78,38 +78,26 @@ void Socket::sendPacket(uint32_t hostSeq, uint32_t hostAck, uint32_t networkDest
 
 #include <sstream>
 
-void Tcp::connect(char *destination, void *userData)
+// networkAddress, hostPort
+std::pair<uint32_t, unsigned int> networkAddressFromString(char *address) {
+    unsigned int addr[5];
+    sscanf(address, "%d.%d.%d.%d:%d", &addr[0], &addr[1], &addr[2], &addr[3], &addr[4]);
+
+    uint32_t networkAddress = addr[0] << 24 | addr[1] << 16 | addr[2] << 8 | addr[3];
+    return {htonl(networkAddress), addr[4]};
+}
+
+void Tcp::connect(char *source, char *destination, void *userData)
 {
-    uint32_t networkDestinationAddress;
-
-    std::stringstream ss;
-    ss << destination;
-
-    unsigned char addr[4];
-
-    for (int i = 0; i < 4; i++) {
-        unsigned int num;
-        ss >> num;
-        ss.ignore();
-        addr[i] = num;
-    }
-
-    networkDestinationAddress = addr[0] << 24 | addr[1] << 16 | addr[2] << 8 | addr[3];
-    networkDestinationAddress = htonl(networkDestinationAddress);
+    auto sourceAddress = networkAddressFromString(source);
+    auto destinationAddress = networkAddressFromString(destination);
 
     uint32_t networkClientSeq = rand();
-    uint16_t networkPort = 4001; // clients need to own this port!
-
-    // localhost
-    uint32_t myIP = networkDestinationAddress;
-
-    // integration driver? getMyIP, allocatePort, etc?
-
-    Socket::sendPacket(networkClientSeq, 0, networkDestinationAddress, myIP, 4000, networkPort, false, true, false, false, nullptr, 0);
+    Socket::sendPacket(networkClientSeq, 0, destinationAddress.first, sourceAddress.first, destinationAddress.second, sourceAddress.second, false, true, false, false, nullptr, 0);
     ip->releasePackageBatch();
 
     // probably Endpoint?
-    inSynState.insert({networkClientSeq, networkPort});
+    inSynState.insert({networkClientSeq, sourceAddress.second});
 }
 
 void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {

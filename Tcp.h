@@ -129,7 +129,7 @@ struct Socket {
         sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
 
         // duplicate
-        sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
+        //sendPacket(hostSeq, hostAck, networkIp, networkDestinationIp, hostPort, hostDestinationPort, true, false, false, false, data, length);
 
         hostSeq += length;
     }
@@ -196,7 +196,7 @@ struct Tcp {
         globalIP = ip;
     }
 
-    void connect(char *destination, void *userData);
+    void connect(char *source, char *destination, void *userData);
 
     void dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader);
 
