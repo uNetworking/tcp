@@ -46,7 +46,7 @@ void testEcho() {
 
         // called for both client and server sockets
         socket->send("Hello over there!", 17);
-
+        socket->send("Hello over there?", 17);
 
         // send tons of data here (both directions)
     });
@@ -76,6 +76,6 @@ void testEcho() {
 }
 
 int main (void) {
-    //testEcho();
+    testEcho();
     testDownload();
 }

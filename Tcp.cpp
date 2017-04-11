@@ -6,6 +6,8 @@ void IP::releasePackageBatch() {
         mmsghdr sendVec[500] = {};
         sockaddr_in sin[500] = {};
 
+        int packages = queuedBuffersNum;
+
         for (int i = 0; i < queuedBuffersNum; i++) {
 
             IpHeader *ipHeader = (IpHeader *) outBuffer[i];
@@ -20,10 +22,11 @@ void IP::releasePackageBatch() {
             messages[i].iov_base = ipHeader;
             messages[i].iov_len = length;
 
-            sendVec[i].msg_hdr.msg_iov = &messages[i];
+            // send out of order!
+            sendVec[i].msg_hdr.msg_iov = &messages[packages - i - 1];
             sendVec[i].msg_hdr.msg_iovlen = 1;
 
-            sendVec[i].msg_hdr.msg_name = &sin[i];
+            sendVec[i].msg_hdr.msg_name = &sin[packages - i - 1];
             sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
 
         }
