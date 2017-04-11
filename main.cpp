@@ -17,11 +17,12 @@ int received = 0;
 
 int packets = 0;
 
+char httpGet[] = "GET /1GB.zip HTTP/1.1\r\nHost: 80.249.99.148\r\n\r\n";
+
 int main (void)
 {
     IP ip; //swappable IP driver - add test IP driver!
     Tcp t(&ip, 4000); //t.listen
-
 
     // send(message, callback)
     // och diverse liknande!
@@ -33,10 +34,8 @@ int main (void)
     t.onConnection([](Socket *socket) {
         std::cout << "[Connection] Connetions: " << ++connections << std::endl;
 
-        if (connections == 2) {
-            // server is last to get onConnection called so it will send
-            socket->send("Hello over there!", 17);
-        }
+        // send simple HTTP GET request
+        socket->send(httpGet, sizeof(httpGet) - 1);
     });
 
     t.onDisconnection([](Socket *socket) {
@@ -45,14 +44,16 @@ int main (void)
 
     // socket->haltReceive
     t.onData([](Socket *socket, char *data, size_t length) {
-        std::cout << "Received data: " << std::string(data, length) << std::endl;
-        socket->shutdown();
+        std::cout << clock() << " Received length: " << length << std::endl;
     });
 
     // t.listen() -> vector of ports in use
 
-    // client is connected first of all
-    t.connect("127.0.0.1:4000", nullptr);
+    // connect to google
+    //t.connect("192.168.1.71", "172.217.23.35:4000", nullptr);
+
+    // download 1gb.zip
+    t.connect("192.168.1.71", "80.249.99.148", nullptr);
 
     t.run();
 }

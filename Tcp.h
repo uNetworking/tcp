@@ -199,7 +199,7 @@ struct Tcp {
         globalIP = ip;
     }
 
-    void connect(char *destination, void *userData);
+    void connect(char *source, char *destination, void *userData);
 
     void dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader);
 
