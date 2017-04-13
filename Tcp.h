@@ -180,20 +180,24 @@ struct Endpoint {
 
 inline bool operator<(const Endpoint a, const Endpoint b) {
 
-    union hasher {
-        Endpoint ep;
-        __int128 i;
-    };
+    // downloads are not corrupt beacuse of this
+//    union hasher {
+//        Endpoint ep;
+//        __int128 i;
+//    };
 
-    hasher aH;
-    aH.i = 0;
-    aH.ep = a;
+//    hasher aH;
+//    aH.i = 0;
+//    aH.ep = a;
 
-    hasher bH;
-    bH.i = 0;
-    bH.ep = b;
+//    hasher bH;
+//    bH.i = 0;
+//    bH.ep = b;
 
-    return aH.i < bH.i;
+//    return aH.i < bH.i;
+
+    // upper is triggering valgrind issues
+    return a.networkDestinationIp < a.networkDestinationIp;
 }
 
 struct Tcp {
@@ -208,16 +212,17 @@ struct Tcp {
 
     void connect(char *source, char *destination, void *userData);
 
-    void dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader);
+    void dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length);
 
     void run() {
         while (true) {
             int messages = ip->fetchPackageBatch();
             for (int i = 0; i < messages; i++) {
-                IpHeader *ipHeader = ip->getIpPacket(i);
+                unsigned int length;
+                IpHeader *ipHeader = ip->getIpPacket(i, length);
                 TcpHeader *tcpHeader = (TcpHeader *) ipHeader->getData();
                 if (tcpHeader->getDestinationPort() == port || tcpHeader->getDestinationPort() == 4001) {
-                    dispatch(ipHeader, tcpHeader);
+                    dispatch(ipHeader, tcpHeader, length);
                 }
             }
             ip->releasePackageBatch();

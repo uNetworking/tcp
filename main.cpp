@@ -14,20 +14,55 @@ int received = 0;
 
 char httpGet[] = "GET /1GB.zip HTTP/1.1\r\nHost: 80.249.99.148\r\n\r\n";
 
-//char httpGet2[] = "GET /pub/fedora/linux/releases/25/Workstation/x86_64/iso/Fedora-Workstation-Live-x86_64-25-1.3.iso HTTP/1.1\r\nHost: 152.19.134.142\r\n\r\n";
-
 #include <chrono>
 #include <fstream>
 
 std::chrono::system_clock::time_point then = std::chrono::system_clock::now();
 int sampleBytes = 0, totalBytes = 0;
 
-//std::ofstream fout("/home/alexhultman/tcpDownload.zip");
+std::ofstream fout("/home/alexhultman/tcpDownload.zip");
 
 void testDownload() {
 
     IP ip;
     Tcp t(&ip, 4000);
+
+    // Context<connectionHandler, dataHandler, disconnectionHandler, IP> c;
+    // Context<Impl, IP> c;
+
+    // Context.getIP().setSourceAddress();
+    // Context.getIP().setSourceHardwareAddress();
+    // Context.getIP().setDestinationHardwareAddress();
+
+    // Context.listen(port);
+    // Context.connect();
+
+
+    // new interface
+    class Node : Context<Node> {
+
+        int somePerNodeData;
+
+        Node(int data) {
+            somePerNodeData = data;
+        }
+
+        void onConnection(Socket *socket, char *data, size_t length) {
+
+        }
+
+        void onDisconnection(Socket *socket) {
+
+        }
+
+        void onData(Socket *socket, char *data, size_t length) {
+
+        }
+    } node(13);
+
+    node.run();
+
+
 
     t.onConnection([](Socket *socket) {
         std::cout << "Sending HTTP GET" << std::endl;
@@ -38,13 +73,23 @@ void testDownload() {
     t.onDisconnection([](Socket *socket) {
         std::cout << "Disconnected" << std::endl;
         std::cout << (float(totalBytes) / (1024 * 1024 * 1024)) * 100 << "%" << std::endl;
-        //fout.close();
+        fout.close();
     });
 
     t.onData([](Socket *socket, char *data, size_t length) {
 
+        static bool first = true;
+
+        // strip HTTP response header at first
+        if (first) {
+            char *strippedData = strstr(data, "\r\n\r\n") + 4;
+            length -= (strippedData - data);
+            data = strippedData;
+            first = false;
+        }
+
         // save data to disk, compare checksum later on
-        //fout.write(data, length);
+        fout.write(data, length);
 
         // display download speed
         std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
@@ -58,6 +103,10 @@ void testDownload() {
         }
         totalBytes += length;
         sampleBytes += length;
+
+        if (totalBytes == 1024 * 1024 * 1024) {
+            std::cout << "Downloaded in full" << std::endl;
+        }
     });
 
     t.connect("192.168.1.104:4001", "80.249.99.148:80", nullptr);

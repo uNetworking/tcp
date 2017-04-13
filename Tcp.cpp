@@ -73,7 +73,7 @@ void Tcp::connect(char *source, char *destination, void *userData)
 
 #include <chrono>
 
-void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
+void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length) {
 
     // lookup associated socket
     Endpoint endpoint = {ipHeader->saddr, ntohs(tcpHeader->source), ipHeader->daddr, ntohs(tcpHeader->dest)};
@@ -151,6 +151,15 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader) {
         int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->doff * 4) - (ipHeader->ihl * 4);
         if (tcpdatalen) {
             char *buf = (char *) ipHeader;
+
+            // how big can an IP packet be?
+            if (buf + tcpdatalen - (char *) ipHeader > length) {
+                std::cout << "ERROR: lengths mismatch!" << std::endl;
+                std::cout << "tcpdatalen: " << tcpdatalen << std::endl;
+                std::cout << "ip total length: " << ipHeader->getTotalLength() << std::endl;
+                std::cout << "buffer length: " << length << std::endl;
+                //exit(-1);
+            }
 
             // determine cancer mode or not
 

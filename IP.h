@@ -72,9 +72,9 @@ struct IP {
         }
 
         for (int i = 0; i < 500; i++) {
-            buffer[i] = new char[1024 * 4];
+            buffer[i] = new char[1024 * 32];
 
-            outBuffer[i] = new char[1024 * 4];
+            outBuffer[i] = new char[1024 * 32];
         }
 
         const int VLEN = 500;
@@ -82,7 +82,7 @@ struct IP {
         memset(msgs, 0, sizeof(msgs));
         for (int i = 0; i < VLEN; i++) {
             iovecs[i].iov_base         = buffer[i];
-            iovecs[i].iov_len          = 1024 * 4;
+            iovecs[i].iov_len          = 1024 * 32;
             msgs[i].msg_hdr.msg_iov    = &iovecs[i];
             msgs[i].msg_hdr.msg_iovlen = 1;
         }
@@ -101,11 +101,13 @@ struct IP {
 
     void releasePackageBatch();
     int fetchPackageBatch() {
-        return recvmmsg(fd, msgs, 1, MSG_WAITFORONE, nullptr);
+        return recvmmsg(fd, msgs, 500, MSG_WAITFORONE, nullptr);
     }
 
-    IpHeader *getIpPacket(int index) {
-        return (IpHeader *) iovecs[index].iov_base;
+    IpHeader *getIpPacket(int index, unsigned int &length) {
+        IpHeader *ipHeader = (IpHeader *) iovecs[index].iov_base;
+        length = iovecs[index].iov_len;
+        return ipHeader;
     }
 
     IpHeader *getIpPacketBuffer() {
