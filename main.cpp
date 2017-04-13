@@ -25,10 +25,7 @@ std::ofstream fout("/home/alexhultman/tcpDownload.zip");
 void testDownload() {
 
     IP ip;
-    Tcp t(&ip, 4000);
-
-    // Context<connectionHandler, dataHandler, disconnectionHandler, IP> c;
-    // Context<Impl, IP> c;
+    Context t(&ip, 4000);
 
     // Context.getIP().setSourceAddress();
     // Context.getIP().setSourceHardwareAddress();
@@ -37,46 +34,7 @@ void testDownload() {
     // Context.listen(port);
     // Context.connect();
 
-
-    // new interface
-    class Node : Context<Node> {
-
-        int somePerNodeData;
-
-        Node(int data) {
-            somePerNodeData = data;
-        }
-
-        void onConnection(Socket *socket, char *data, size_t length) {
-
-        }
-
-        void onDisconnection(Socket *socket) {
-
-        }
-
-        void onData(Socket *socket, char *data, size_t length) {
-
-        }
-    } node(13);
-
-    node.run();
-
-
-
-    t.onConnection([](Socket *socket) {
-        std::cout << "Sending HTTP GET" << std::endl;
-        socket->send(httpGet, sizeof(httpGet) - 1);
-        totalBytes = 0;
-    });
-
-    t.onDisconnection([](Socket *socket) {
-        std::cout << "Disconnected" << std::endl;
-        std::cout << (float(totalBytes) / (1024 * 1024 * 1024)) * 100 << "%" << std::endl;
-        fout.close();
-    });
-
-    t.onData([](Socket *socket, char *data, size_t length) {
+    auto dataHandler = [](Socket *socket, char *data, size_t length) {
 
         static bool first = true;
 
@@ -107,75 +65,92 @@ void testDownload() {
         if (totalBytes == 1024 * 1024 * 1024) {
             std::cout << "Downloaded in full" << std::endl;
         }
-    });
+    };
 
-    t.connect("192.168.1.104:4001", "80.249.99.148:80", nullptr);
-
-    // download fedora project
-    //t.connect("192.168.1.104:4001", "152.19.134.142:80", nullptr);
-
-    t.run();
-}
-
-void testEcho() {
-    IP ip; //swappable IP driver - add test IP driver!
-    Tcp t(&ip, 4000); //t.listen
-
-    t.onConnection([](Socket *socket) {
-        std::cout << "[Connection] Connetions: " << ++connections << std::endl;
-
-        // called for both client and server sockets
-        if (connections == 1) {
-            socket->send("Hello over there!", 17);
-            socket->send("Hello over there?", 17);
-        }
-
-        // send tons of data here (both directions)
-    });
-
-    t.onDisconnection([](Socket *socket) {
-        std::cout << "[Disconnection] Connetions: " << --connections << std::endl;
-    });
-
-    // socket->haltReceive
-    t.onData([](Socket *socket, char *data, size_t length) {
-        std::cout << "Received data: " << std::string(data, length) << std::endl;
-
-        if (received++ < 2) {
-            //socket->send("Thanks", 6);
-        }
-
-        /*socket->send("------\n", 7);
-        socket->send(data, length);
-        socket->send("------\n", 7);*/
-    });
-
-    // t.listen() -> vector of ports in use
-
-    t.connect("127.0.0.1:4001", "127.0.0.1:4000", nullptr);
-
-    t.run();
-}
-
-void testReceive() {
-    IP ip;
-    Tcp t(&ip, 4000);
-
-    t.onConnection([](Socket *socket) {
-        std::cout << "Connected" << std::endl;
-    });
-
-    t.onDisconnection([](Socket *socket) {
+    auto disconnectionHandler = [](Socket *socket) {
         std::cout << "Disconnected" << std::endl;
+        std::cout << (float(totalBytes) / (1024 * 1024 * 1024)) * 100 << "%" << std::endl;
+        fout.close();
+    };
+
+    t.addState(0, {dataHandler, disconnectionHandler});
+
+    // Context.setSocketAllocator()
+    // Context.replaceSocketMemory(
+
+    t.onConnection([](Socket *socket) {
+
+        socket->setState(0);
+
+        std::cout << "Sending HTTP GET" << std::endl;
+        socket->send(httpGet, sizeof(httpGet) - 1);
+        totalBytes = 0;
     });
 
-    t.onData([](Socket *socket, char *data, size_t length) {
-        std::cout << "Now at " << (float(received) / (1024 * 1024 * 1024)) * 100 << "%" << std::endl;
-        received += length;
-    });
-
+    // this will create a Socket right now, set state here?
+    t.connect("192.168.1.104:4001", "80.249.99.148:80", nullptr);
     t.run();
 }
+
+//void testEcho() {
+//    IP ip; //swappable IP driver - add test IP driver!
+//    Context t(&ip, 4000); //t.listen
+
+//    t.onConnection([](Socket *socket) {
+//        std::cout << "[Connection] Connetions: " << ++connections << std::endl;
+
+//        // called for both client and server sockets
+//        if (connections == 1) {
+//            socket->send("Hello over there!", 17);
+//            socket->send("Hello over there?", 17);
+//        }
+
+//        // send tons of data here (both directions)
+//    });
+
+//    t.onDisconnection([](Socket *socket) {
+//        std::cout << "[Disconnection] Connetions: " << --connections << std::endl;
+//    });
+
+//    // socket->haltReceive
+//    t.onData([](Socket *socket, char *data, size_t length) {
+//        std::cout << "Received data: " << std::string(data, length) << std::endl;
+
+//        if (received++ < 2) {
+//            //socket->send("Thanks", 6);
+//        }
+
+//        /*socket->send("------\n", 7);
+//        socket->send(data, length);
+//        socket->send("------\n", 7);*/
+//    });
+
+//    // t.listen() -> vector of ports in use
+
+//    t.connect("127.0.0.1:4001", "127.0.0.1:4000", nullptr);
+
+//    t.run();
+//}
+
+//void testReceive() {
+//    IP ip;
+//    Context t(&ip, 4000);
+
+//    t.onConnection([](Socket *socket) {
+//        std::cout << "Connected" << std::endl;
+//    });
+
+//    t.onDisconnection([](Socket *socket) {
+//        std::cout << "Disconnected" << std::endl;
+//    });
+
+//    t.onData([](Socket *socket, char *data, size_t length) {
+//        std::cout << "Now at " << (float(received) / (1024 * 1024 * 1024)) * 100 << "%" << std::endl;
+//        received += length;
+//    });
+
+//    t.run();
+//}
 
 int main (void) {
     //testReceive(); // use netcat locally to transfer data

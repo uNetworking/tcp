@@ -56,7 +56,7 @@ std::pair<uint32_t, unsigned int> networkAddressFromString(char *address) {
     return {htonl(networkAddress), addr[4]};
 }
 
-void Tcp::connect(char *source, char *destination, void *userData)
+void Context::connect(char *source, char *destination, void *userData)
 {
     // these should return an Endpoint straight up
     auto sourceAddress = networkAddressFromString(source);
@@ -73,7 +73,7 @@ void Tcp::connect(char *source, char *destination, void *userData)
 
 #include <chrono>
 
-void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length) {
+void Context::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length) {
 
     // lookup associated socket
     Endpoint endpoint = {ipHeader->saddr, ntohs(tcpHeader->source), ipHeader->daddr, ntohs(tcpHeader->dest)};
@@ -84,7 +84,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length
 
         if (tcpHeader->fin) {
 
-            ondisconnection(socket);
+            socketStates[socket->applicationState].ondisconnection(socket);
             sockets.erase(endpoint);
 
             // send fin, ack back
@@ -195,7 +195,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length
 
                 socket->hostAck += tcpdatalen;
                 uint32_t lastHostSeq = socket->hostSeq;
-                ondata(socket, buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
+                socketStates[socket->applicationState].ondata(socket, buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
 
                 int blockedSegments = socket->blocks.size();
 
@@ -209,7 +209,7 @@ void Tcp::dispatch(IpHeader *ipHeader, TcpHeader *tcpHeader, unsigned int length
 
                         // handle data
                         socket->hostAck += it->buffer.length();
-                        ondata(socket, (char *) it->buffer.data(), it->buffer.length());
+                        socketStates[socket->applicationState].ondata(socket, (char *) it->buffer.data(), it->buffer.length());
 
                         // kan inte bara fortsätta, måste börja om!
                         it = socket->blocks.erase(it);

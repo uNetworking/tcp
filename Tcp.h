@@ -168,6 +168,12 @@ struct Socket {
 
     uint32_t originalHostAck;
     std::vector<Block> blocks;
+
+    // application level dispatch
+    int applicationState;
+    void setState(int socketState) {
+        applicationState = socketState;
+    }
 };
 
 struct Endpoint {
@@ -200,13 +206,26 @@ inline bool operator<(const Endpoint a, const Endpoint b) {
     return a.networkDestinationIp < a.networkDestinationIp;
 }
 
-struct Tcp {
+struct SocketState {
+    std::function<void(Socket *, char *, size_t)> ondata;
+    std::function<void(Socket *)> ondisconnection;
+};
+
+struct Context {
     std::map<Endpoint, Socket *> sockets;
+
+    //std::vector<SocketState> socketStates;
+
+    std::map<int, SocketState> socketStates;
+
+    void addState(int index, SocketState socketState) {
+        socketStates[index] = socketState;
+    }
 
     IP *ip;
     int port;
 
-    Tcp(IP *ip, int port) :ip(ip), port(port) {
+    Context(IP *ip, int port) :ip(ip), port(port) {
         globalIP = ip;
     }
 
@@ -230,19 +249,8 @@ struct Tcp {
     }
 
     std::function<void(Socket *)> onconnection;
-    std::function<void(Socket *, char *, size_t)> ondata;
-    std::function<void(Socket *)> ondisconnection;
-
     void onConnection(std::function<void(Socket *)> f) {
         onconnection = f;
-    }
-
-    void onDisconnection(std::function<void(Socket *)> f) {
-        ondisconnection = f;
-    }
-
-    void onData(std::function<void(Socket *, char *, size_t)> f) {
-        ondata = f;
     }
 };
 
