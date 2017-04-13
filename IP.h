@@ -101,7 +101,7 @@ struct IP {
 
     void releasePackageBatch();
     int fetchPackageBatch() {
-        return recvmmsg(fd, msgs, 500, MSG_WAITFORONE, nullptr);
+        return recvmmsg(fd, msgs, 1, MSG_WAITFORONE, nullptr);
     }
 
     IpHeader *getIpPacket(int index) {
@@ -110,6 +110,7 @@ struct IP {
 
     IpHeader *getIpPacketBuffer() {
         if (queuedBuffersNum == 500) {
+            std::cout << "Releasing IP buffers in getIpPacketBuffer" << std::endl;
             releasePackageBatch();
         }
         return (IpHeader *) outBuffer[queuedBuffersNum++];

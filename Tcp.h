@@ -19,6 +19,7 @@ struct TcpHeader : tcphdr {
         return ntohs(source);
     }
 
+    unsigned char options[4];
 };
 
 extern IP *globalIP;
@@ -158,6 +159,15 @@ struct Socket {
         SYN_SENT,
         ESTABLISHED
     } state;
+
+    // temporary buffering test
+    struct Block {
+        uint32_t seqStart;
+        std::string buffer;
+    };
+
+    uint32_t originalHostAck;
+    std::vector<Block> blocks;
 };
 
 struct Endpoint {
