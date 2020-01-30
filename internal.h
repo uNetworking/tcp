@@ -12,6 +12,20 @@ struct us_socket_context_t {
     struct us_socket_t *(*on_writable)(struct us_socket_t *s);
     struct us_socket_t *(*on_timeout)(struct us_socket_t *s);
     struct us_socket_t *(*on_end)(struct us_socket_t *s);
+
+    /* Socket contexts form a link */
+    struct us_socket_context_t *next;
+
+    /* What are our listen_sockets */
+    struct us_listen_socket_t *listen_socket;
+};
+
+struct us_listen_socket_t {
+    int socket_ext_size;
+    struct us_socket_context_t *context;
+
+    /* What do we really listen to? */
+    int port;
 };
 
 struct us_socket_t {

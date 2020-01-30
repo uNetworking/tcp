@@ -109,27 +109,36 @@ void us_internal_socket_context_send_packet(struct us_socket_context_t *context,
 }
 
 // this is the only socket we can keep for now
-struct us_socket_t *s;
+struct us_socket_t *global_s;
 
 // looking up a socket from its properties
 struct us_socket_t *lookup_socket(uint32_t sourceIP, uint16_t sourcePort, uint32_t destIP, uint16_t destPort) {
-    return s;
+
+
+    return global_s;
 }
 
 // creates a new socket with the given description
 struct us_socket_t *add_socket() {
-    s = malloc(sizeof(struct us_socket_t));
+    if (global_s) {
+        printf("ERRO! ALREADY HAVING ONE SOCKET!\n");
+        exit(1);
+    }
+
+    // allokera mer!
+    global_s = malloc(sizeof(struct us_socket_t) + 256);
     // init the socket
 
-    s->closed = 0;
-    s->shutdown = 0;
-    return s;
+    global_s->closed = 0;
+    global_s->shutdown = 0;
+
+    return global_s;
 }
 
-void remove_socket(struct us_socket_t *ss) {
-    free(ss);
+void remove_socket(struct us_socket_t *s) {
+    free(s);
 
-    s = 0;
+    global_s = 0;
 }
 
 //us_socket_write can take identifier to merge common sends into one
@@ -138,10 +147,14 @@ void remove_socket(struct us_socket_t *ss) {
 // pass tcp data to the context - call it read_packet, send_packet
 void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length) {
 
+    printf("Reading TCP packet!\n");
+
     // lookup socket?
     struct us_socket_t *s = lookup_socket(ipHeader->saddr, ntohs(tcpHeader->header.source), ipHeader->daddr, ntohs(tcpHeader->header.dest));
     // this socket did not even exist!
     if (!s) {
+        printf("We did not have this socket beore!\n");
+
         // is this a syn or ack?
         if (tcpHeader->header.syn && !tcpHeader->header.ack) {
 
@@ -176,11 +189,14 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
     } else {
         // we do have this socket already
 
+        printf("We dod have this socket!\n");
+
         if (tcpHeader->header.fin) {
+
+            printf("We got fin!\n");
 
             // emit callback
             context->on_close(s);
-            remove_socket(s);
 
             // send fin, ack back
             s->hostAck += 1;
@@ -189,7 +205,12 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
             us_internal_socket_context_send_packet(context, s->hostSeq, s->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 0, 1, 0, NULL, 0);
 
 
+            printf("Deleting socket now!\n");
+            remove_socket(s);
+
         } else if (tcpHeader->header.ack) {
+
+            printf("We got ack!\n");
 
             if (s->state == SOCKET_ESTABLISHED) {
                 // why thank you
@@ -198,6 +219,8 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
                 // note: PSH, ACK with data can act as connection ACK (this is probably good)
                 // let's just not allow it for now
                 if (!tcpHeader->header.psh) {
+
+                    printf("somehwre!\n");
 
                     uint32_t seq = ntohl(tcpHeader->header.seq);
                     uint32_t ack = ntohl(tcpHeader->header.ack_seq);
@@ -209,19 +232,24 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
 
                         //onconnection(socket);
 
-                        context->on_open(s, 1, 0, 0); // I guess this is for outbound connections
+                        printf("Emitting open now!\n");
+                        context->on_open(s, 0, "nej!", 0); // I guess this is for outbound connections
 
+                        printf("done with open!\n");
                         return;
 
                         // empty eventual buffering hindered so far by the lower seq and ack numbers!
 
                     } else {
                         //std::cout << "Server ACK is wrong!" << std::endl;
+                        printf("Server ack is wrong!\n");
                     }
 
                 }
 
             } else if (tcpHeader->header.syn && s->state == SOCKET_SYN_SENT) {
+
+                printf("Socket syn sent!\n");
 
                 uint32_t ack = ntohl(tcpHeader->header.ack_seq);
 
@@ -256,6 +284,8 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
         if (tcpdatalen) {
             char *buf = (char *) ipHeader;
 
+            printf("We got data!\n");
+
             // how big can an IP packet be?
             if (buf + tcpdatalen - (char *) ipHeader > length) {
                 printf("ERROR! length mismatch!\n");
@@ -276,6 +306,9 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
                 printf("we are in cancer mode! out of sync!\n");
 
                 if (s->hostAck > seq) {
+
+                    printf("GOT DUPLICATE!\n");
+
                     // already seen data, ignore
                     //std::cout << "GOT DUPLICATE!" << std::endl;
 
@@ -300,11 +333,18 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
        //         Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
             } else {
 
+                printf("Emmitting data!\n");
+
                 s->hostAck += tcpdatalen;
                 uint32_t lastHostSeq = s->hostSeq;
 
                 // emit data
-                context->on_data(s, buf + ipHeader->ihl * 4 + tcpHeader->header.doff * 4, tcpdatalen);
+                s = context->on_data(s, buf + ipHeader->ihl * 4 + tcpHeader->header.doff * 4, tcpdatalen);
+
+                // även globala socketen ska ändras!
+                global_s = s;
+
+                printf("We have potentially changed socket now!\n");
 
                 //int blockedSegments = socket->blocks.size();
 
@@ -361,18 +401,18 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
 struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *loop, int ext_size, struct us_socket_context_options_t options) {
     struct us_socket_context_t *socket_context = (struct us_socket_context_t *) malloc(sizeof(struct us_socket_context_t) + ext_size);
 
+    /* Link socket context to loop */
     socket_context->loop = loop;
+    socket_context->listen_socket = 0;
 
-    // länka ihop socket contextet med loopen
+    /* Link loop to socket contexts */
+    socket_context->next = loop->context;
     loop->context = socket_context;
-
-    //printf("us_create_socket_context: %p\n", socket_context);
 
     return socket_context;
 }
 
 void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
-    //printf("us_socket_context_free: %p\n", context);
     free(context);
 }
 
@@ -404,18 +444,20 @@ void *us_socket_context_ext(int ssl, struct us_socket_context_t *context) {
     return context + 1;
 }
 
-struct us_listen_socket_t {
-    int socket_ext_size;
-    struct us_socket_context_t *context;
-};
-
 struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
     struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) malloc(sizeof(struct us_listen_socket_t));
 
     listen_socket->socket_ext_size = socket_ext_size;
     listen_socket->context = context;
 
-    //context->loop->listen_socket = listen_socket;
+    printf("Overriding listen port to 4000!\n");
+    port = 4000;
+
+    /* What do you listen to? */
+    listen_socket->port = port;
+
+    /* Context holds a list of listen sockets */
+    context->listen_socket = listen_socket;
 
     return listen_socket;
 }
@@ -437,6 +479,8 @@ struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *co
 struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int ext_size) {
     struct us_socket_t *new_s = (struct us_socket_t *) realloc(s, sizeof(struct us_socket_t) + ext_size);
     new_s->context = context;
+
+    printf("Adopting socket now!\n");
 
     return new_s;
 }

@@ -35,6 +35,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     struct us_loop_t *loop = (struct us_loop_t *) malloc(sizeof(struct us_loop_t) + ext_size);
 
     loop->listen_socket = 0;
+    loop->context = 0;
     loop->close_list = 0;
 
     loop->pre_cb = pre_cb;
@@ -100,26 +101,54 @@ void *us_loop_ext(struct us_loop_t *loop) {
 
 #include "internal.h"
 
+// we have this somewhere
+extern struct us_socket_t *global_s;
+
 void us_loop_run(struct us_loop_t *loop) {
     printf("Getting ip packets now\n");
 
     while (1) {
         int messages = fetchPackageBatch(loop);
 
-        int port = 4000;
-
         for (int i = 0; i < messages; i++) {
             unsigned int length;
             IpHeader *ipHeader = getIpPacket(loop, i, &length);
-            struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);//ipHeader->getData();
 
-            // för alla socket contexts, låt dem kolla om de lyssnar på denna porten?
-            if (TcpHeader_getDestinationPort(tcpHeader) == port || /*tcpHeader->getDestinationPort()*/TcpHeader_getDestinationPort(tcpHeader) == 4001) {
-                us_internal_socket_context_read_tcp(loop->context, ipHeader, tcpHeader, length);
+            /* First we filter out everything that isn't tcp over ipv4 */
+            if (ipHeader->version != 4 || ipHeader->protocol != IPPROTO_TCP) {
+                continue;
+            }
+
+            /* Now we know this is tcp */
+            struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
+
+            /* Is this packet SYN? */
+            if (tcpHeader->header.syn && !tcpHeader->header.ack) {
+                /* Loop over all contexts */
+                for (struct us_socket_context_t *context = loop->context; context; context = context->next) {
+                    /* Loop over all listen sockets */
+                    for (struct us_listen_socket_t *listen_socket = context->listen_socket; listen_socket; ) {
+
+                        if (listen_socket->port == TcpHeader_getDestinationPort(tcpHeader)) {
+                            us_internal_socket_context_read_tcp(listen_socket->context, ipHeader, tcpHeader, length);
+                        }
+
+                        /* We only have one listen socket for now */
+                        break;
+                    }
+                }
+            } else {
+                /* Step 1: is this TCP packet from our global socket? */
+                if (global_s) {
+
+                    /* Check if this packet is for our socket */
+                    if (global_s->networkIp == ipHeader->saddr && global_s->hostPort == TcpHeader_getSourcePort(tcpHeader) && global_s->networkDestinationIp == ipHeader->daddr && global_s->hostDestinationPort == TcpHeader_getDestinationPort(tcpHeader)) {
+                        us_internal_socket_context_read_tcp(global_s->context, ipHeader, tcpHeader, length);
+                    }
+
+                }
             }
         }
-
-        //printf("about to release now!\n");
 
         // release aka send
         if (loop->queuedBuffersNum) {
