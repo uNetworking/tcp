@@ -1,12 +1,12 @@
 /* uSockets is entierly opaque so we can use the real header straight up */
 #include "../uWebSockets.js/uWebSockets/uSockets/src/libusockets.h"
 
+#include "internal.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdalign.h>
 #include <string.h>
-
-#include "internal.h"
 
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
 

@@ -215,6 +215,13 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
 
                     /* Emit open event */
                     context->on_open(s, 0, "nej!", 0);
+
+                    static int sockets;
+                    sockets++;
+
+                    if (sockets % 1000 == 0)
+                    printf("Sockets open: %d\n", sockets);
+
                 } else {
                     printf("Server ack is wrong!\n");
                     exit(0);

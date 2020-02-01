@@ -1,5 +1,7 @@
 // loop implements the getting of IP packets and distributing of events
 
+
+
 /* uSockets is entierly opaque so we can use the real header straight up */
 #include "../uWebSockets.js/uWebSockets/uSockets/src/libusockets.h"
 
@@ -266,7 +268,7 @@ void us_loop_run(struct us_loop_t *loop) {
                 // this should never happen, if it does we read too slowly and lag behind (but should be reset whatever we miss anyways)
                 if (messages == 1024) {
                     printf("WE ARE NOT READING PACKAGES FAST ENOUGH!\n");
-                    exit(0);
+                    //exit(0);
                 }
 
                 for (int i = 0; i < messages; i++) {
@@ -293,12 +295,8 @@ void us_loop_run(struct us_loop_t *loop) {
 
                                     us_internal_socket_context_read_tcp(NULL, listen_socket->context, ipHeader, tcpHeader, length);
 
-
                                     // vi kommer att ha ändrat global_s om det finns en ny socket!
-
                                     if (global_s) {
-
-
                                         struct SOCKET_KEY key = {
                                             TcpHeader_getSourcePort(tcpHeader),
                                             TcpHeader_getDestinationPort(tcpHeader),
@@ -309,8 +307,6 @@ void us_loop_run(struct us_loop_t *loop) {
                                         global_s->key = key;
 
                                         HASH_ADD(hh, sockets, key, sizeof(struct SOCKET_KEY), global_s);
-
-
 
                                         global_s = 0;
                                     }
@@ -341,17 +337,6 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 
                 releaseSend(loop);
-    
-
-
-
-
-
-
-
-
-
-
             }
         }
 

@@ -1,6 +1,11 @@
 #ifndef INTERNAL_H
 #define INTERNAL_H
 
+#define _GNU_SOURCE
+
+#define _GNU_SOURCE         /* See feature_test_macros(7) */
+      #include <sys/socket.h>
+
 #include "Packets.h"
 
 struct us_socket_context_t {
@@ -89,9 +94,6 @@ struct us_socket_t {
 void us_internal_socket_context_send_packet(struct us_socket_context_t *context, uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
                  int hostSourcePort, int flagAck, int flagSyn, int flagFin, int flagRst, char *data, size_t length);
 
-#define _GNU_SOURCE         /* See feature_test_macros(7) */
-      #include <sys/socket.h>
-
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -107,11 +109,6 @@ void us_internal_socket_context_send_packet(struct us_socket_context_t *context,
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <time.h>
-
-struct mmsghdr {
-         struct msghdr msg_hdr;  /* Message header */
-         unsigned int  msg_len;  /* Number of received bytes for header */
-     };
 
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
