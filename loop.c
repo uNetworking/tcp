@@ -6,12 +6,26 @@
 
 #include "internal.h"
 
+// we print statistics such as numer of out of sync, number of "healed" sockets due to drop, etc
+void print_statistics(struct us_loop_t *loop) {
+    printf("Packets out of order so far: %d\n", loop->packets_out_of_order);
+    printf("Healed sockets so far: %d\n", loop->healed_sockets);
+    printf("Duplicated packets: %d\n\n", loop->duplicated_packets);
+}
+
+#include <sys/time.h>
+
 // should be more like read() from a file
 int fetchPackageBatch(struct us_loop_t *loop) {
-    return recvmmsg(loop->fd, loop->msgs, 1024, MSG_WAITFORONE, NULL);
+    // wait for one is pointless here
+    return recvmmsg(loop->fd, loop->msgs, 1024, /*MSG_WAITFORONE*/ 0, 0);
 }
 
 void releaseSend(struct us_loop_t *loop) {
+
+
+    // this is not blocking, should block!
+
         // release aka send
     if (loop->queuedBuffersNum) {
 
@@ -51,7 +65,18 @@ void releaseSend(struct us_loop_t *loop) {
 
         }
 
-        sendmmsg(loop->fd, sendVec, loop->queuedBuffersNum, 0);
+        int sent = 0;
+
+        // we just block until we're done
+        while (sent != loop->queuedBuffersNum) {
+            int tmp = sendmmsg(loop->fd, &sendVec[sent], loop->queuedBuffersNum - sent, 0);
+            if (tmp > 0) {
+                sent += tmp;
+            }
+        }
+        
+
+
         loop->queuedBuffersNum = 0;
 
         //std::cout << "Sent now" << std::endl;
@@ -80,6 +105,8 @@ IpHeader *getIpPacketBuffer(struct us_loop_t *loop) {
     return (IpHeader *) loop->outBuffer[loop->queuedBuffersNum++];
 }
 
+#include <sys/epoll.h>
+
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     struct us_loop_t *loop = (struct us_loop_t *) malloc(sizeof(struct us_loop_t) + ext_size);
 
@@ -91,19 +118,33 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->post_cb = post_cb;
     loop->wakeup_cb = wakeup_cb;
 
-
-        printf("creating loop: %p\n", loop);
-
-
     //
 
-    loop->fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP); // close(fd) vid stängning
+    loop->packets_out_of_order = 0;
+    loop->healed_sockets = 0;
+    loop->duplicated_packets = 0;
+
+    loop->epfd = epoll_create1(0);
+
+    loop->timer = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.u64 = 0; // mark the timer as 0
+    epoll_ctl(loop->epfd, EPOLL_CTL_ADD, loop->timer, &event);
+
+    loop->fd = socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_TCP); // close(fd) vid stängning
     if (loop->fd == -1) {
         //throw IP_ERR;
 
         printf("Kan inte skapa IP socket!\n");
         exit(0);
     }
+
+    //struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.u64 = 1; // mark the raw socket as 1
+    epoll_ctl(loop->epfd, EPOLL_CTL_ADD, loop->fd, &event);
 
     for (int i = 0; i < 1024; i++) {
         loop->buffer[i] = malloc(1024 * 32);
@@ -128,9 +169,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
         //throw IP_ERR;
     }
 
-
     loop->queuedBuffersNum = 0;
-
 
     return loop;
 }
@@ -178,89 +217,143 @@ void remove_socket(struct us_socket_t *s) {
     global_s = 0;
 }
 
+/* We also need to merge this with uSockets and enable TLS over it */
+/* WITH_USERSPACE=1 */
+
+/* We need to have timeout by now, and every tick should print statistics on packet loss */
 void us_loop_run(struct us_loop_t *loop) {
     printf("Getting ip packets now\n");
 
-    while (1) {
-        int messages = fetchPackageBatch(loop);
+    int repeat_ms = 4000;
+    int ms = 4000;
 
-        // this should never happen, if it does we read too slowly and lag behind (but should be reset whatever we miss anyways)
-        if (messages == 1024) {
-            printf("WE ARE NOT READING PACKAGES FAST ENOUGH!\n");
-            exit(0);
-        }
+    struct itimerspec timer_spec = {
+        {repeat_ms / 1000, ((long)repeat_ms * 1000000) % 1000000000},
+        {ms / 1000, ((long)ms * 1000000) % 1000000000}
+    };
 
-        for (int i = 0; i < messages; i++) {
-            unsigned int length;
-            IpHeader *ipHeader = getIpPacket(loop, i, &length);
+    timerfd_settime(loop->timer, 0, &timer_spec, NULL);
 
-            /* First we filter out everything that isn't tcp over ipv4 */
-            if (ipHeader->version != 4 || ipHeader->protocol != IPPROTO_TCP) {
-                continue;
+    while(1) {
+        // epoll_wait on two fds: time and raw socket
+        struct epoll_event events[2];
+        int numEvents = epoll_wait(loop->epfd, events, 2, -1);
+
+        for (int i = 0; i < numEvents; i++) {
+            if (events[i].data.u64 == 0) {
+                //printf("Timerfd tick!\n");
+
+                print_statistics(loop);
+
+                uint64_t buf;
+                read(loop->timer, &buf, 8);
             }
 
-            /* Now we know this is tcp */
-            struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
-
-            /* Is this packet SYN? */
-            if (tcpHeader->header.syn && !tcpHeader->header.ack) {
-                /* Loop over all contexts */
-                for (struct us_socket_context_t *context = loop->context; context; context = context->next) {
-                    /* Loop over all listen sockets */
-                    for (struct us_listen_socket_t *listen_socket = context->listen_socket; listen_socket; ) {
-
-                        if (listen_socket->port == TcpHeader_getDestinationPort(tcpHeader)) {
-                            //global_s = 0;
-
-                            us_internal_socket_context_read_tcp(NULL, listen_socket->context, ipHeader, tcpHeader, length);
-
-
-                            // vi kommer att ha ändrat global_s om det finns en ny socket!
-
-                            if (global_s) {
-
-
-                                struct SOCKET_KEY key = {
-                                    TcpHeader_getSourcePort(tcpHeader),
-                                    TcpHeader_getDestinationPort(tcpHeader),
-                                    ipHeader->saddr,
-                                    ipHeader->daddr
-                                };
-
-                                global_s->key = key;
-
-                                HASH_ADD(hh, sockets, key, sizeof(struct SOCKET_KEY), global_s);
+            if (events[i].data.u64 == 1) {
+                // a packet
 
 
 
-                                global_s = 0;
+                int messages = fetchPackageBatch(loop);
+
+                // should never happen
+                if (messages == -1) {
+                    continue;
+                }
+
+                //printf("Read %d packets\n", messages);
+
+                // this should never happen, if it does we read too slowly and lag behind (but should be reset whatever we miss anyways)
+                if (messages == 1024) {
+                    printf("WE ARE NOT READING PACKAGES FAST ENOUGH!\n");
+                    exit(0);
+                }
+
+                for (int i = 0; i < messages; i++) {
+                    unsigned int length;
+                    IpHeader *ipHeader = getIpPacket(loop, i, &length);
+
+                    /* First we filter out everything that isn't tcp over ipv4 */
+                    if (ipHeader->version != 4 || ipHeader->protocol != IPPROTO_TCP) {
+                        continue;
+                    }
+
+                    /* Now we know this is tcp */
+                    struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
+
+                    /* Is this packet SYN? */
+                    if (tcpHeader->header.syn && !tcpHeader->header.ack) {
+                        /* Loop over all contexts */
+                        for (struct us_socket_context_t *context = loop->context; context; context = context->next) {
+                            /* Loop over all listen sockets */
+                            for (struct us_listen_socket_t *listen_socket = context->listen_socket; listen_socket; ) {
+
+                                if (listen_socket->port == TcpHeader_getDestinationPort(tcpHeader)) {
+                                    //global_s = 0;
+
+                                    us_internal_socket_context_read_tcp(NULL, listen_socket->context, ipHeader, tcpHeader, length);
+
+
+                                    // vi kommer att ha ändrat global_s om det finns en ny socket!
+
+                                    if (global_s) {
+
+
+                                        struct SOCKET_KEY key = {
+                                            TcpHeader_getSourcePort(tcpHeader),
+                                            TcpHeader_getDestinationPort(tcpHeader),
+                                            ipHeader->saddr,
+                                            ipHeader->daddr
+                                        };
+
+                                        global_s->key = key;
+
+                                        HASH_ADD(hh, sockets, key, sizeof(struct SOCKET_KEY), global_s);
+
+
+
+                                        global_s = 0;
+                                    }
+
+                                }
+
+                                /* We only have one listen socket for now */
+                                break;
                             }
+                        }
+                    } else {
 
+                        struct us_socket_t *s;
+                        struct SOCKET_KEY key = {
+                            TcpHeader_getSourcePort(tcpHeader),
+                            TcpHeader_getDestinationPort(tcpHeader),
+                            ipHeader->saddr,
+                            ipHeader->daddr
+                        };
+
+                        HASH_FIND(hh, sockets, &key, sizeof(struct SOCKET_KEY), s);
+
+                        if (s) {
+                            us_internal_socket_context_read_tcp(s, s->context, ipHeader, tcpHeader, length);
                         }
 
-                        /* We only have one listen socket for now */
-                        break;
                     }
                 }
-            } else {
 
-                struct us_socket_t *s;
-                struct SOCKET_KEY key = {
-                    TcpHeader_getSourcePort(tcpHeader),
-                    TcpHeader_getDestinationPort(tcpHeader),
-                    ipHeader->saddr,
-                    ipHeader->daddr
-                };
+                releaseSend(loop);
+    
 
-                HASH_FIND(hh, sockets, &key, sizeof(struct SOCKET_KEY), s);
 
-                if (s) {
-                    us_internal_socket_context_read_tcp(s, s->context, ipHeader, tcpHeader, length);
-                }
+
+
+
+
+
+
+
 
             }
         }
 
-        releaseSend(loop);
     }
 }

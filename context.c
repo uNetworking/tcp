@@ -165,6 +165,7 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
 
                 /* Debug */
                 s->packets = 1; // obviously we got SYN
+                s->mostOutOfSync = 0;
 
                 /* Send syn, ack */
                 us_internal_socket_context_send_packet(context, hostSeq, hostAck + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 1, 0, 0, NULL, 0);
@@ -269,18 +270,35 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
             uint32_t seq = ntohl(tcpHeader->header.seq);
             if (s->hostAck != seq) {
 
+                /* This implementation should rarely see out of orders, since most sends are 1 packet big */
+                /* We only throw away future packets, and count on TCP resending them. Duplicates are acked again */
+
                 /* We have already seen this packet, calm down, the client did not get ack in time */
                 if (s->hostAck > seq) {
-                    // getting a duplicate, something we already seen, this should mean we did not answer in time or not at all
-                    printf("GOT DUPLICATE!\n");
-                    exit(0);
+
+                    context->loop->duplicated_packets++;
 
                     /* Should probably send a new ack */
-                    
+                    us_internal_socket_context_send_packet(context, s->hostSeq, s->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 0, 0, 0, NULL, 0);
+
+                    return;
+
                 } else {
-                    /* We got a packet that is supposed to be for the future, we need to buffer it up */
+                    /* We got a packet that is supposed to be for the future, we need to buffer it up or just throw it away */
                     uint32_t future = (seq - s->hostAck);
-                    printf("We got a packet that is %d bytes in the future as socket's %d packet so far including SYN\n", future, s->packets);
+                    //printf("We got a packet that is %d bytes in the future as socket's %d packet so far including SYN\n", future, s->packets);
+
+
+                    // increase for statistics
+                    context->loop->packets_out_of_order++;
+
+                    // for now just store one
+                    if (!s->mostOutOfSync) {
+                        s->mostOutOfSync = seq;
+                    }
+                    
+
+                    // om en socket som är i fucked state får ett nytt paket som är i fas
 
 
                     // we should mark this socket with the highest seen packet, then tell the user when we "healed" from this out of order
@@ -295,6 +313,13 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                 /* Increase by length of data */
                 s->hostAck += tcpdatalen;
                 uint32_t lastHostSeq = s->hostSeq;
+
+                /* Now that we received data in sync, did we heal the out of sync? */
+                if (s->mostOutOfSync) {
+                    printf("WE HELATED A SOCKET A BIT!\n");
+                    context->loop->healed_sockets++;
+                    s->mostOutOfSync = 0;
+                }
 
                 /* Emit data, changing socket if necessary */
                 s = context->on_data(s, buf + ipHeader->ihl * 4 + tcpHeader->header.doff * 4, tcpdatalen);

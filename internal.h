@@ -43,6 +43,9 @@ struct us_socket_t {
     // debug
     int packets;
 
+    // largest seq we seen that is out of sync, or 0 if not seen
+    uint32_t mostOutOfSync;
+
 
     //struct us_socket_t *next;
 
@@ -110,6 +113,9 @@ struct mmsghdr {
          unsigned int  msg_len;  /* Number of received bytes for header */
      };
 
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
+
 struct us_loop_t {
 
     /* We only support one listen socket */
@@ -129,7 +135,7 @@ struct us_loop_t {
 
     // vi har
 
-    int fd;
+    int fd, epfd, timer;
     char *buffer[1024];
     size_t length[1024];
     struct mmsghdr msgs[1024];
@@ -139,6 +145,15 @@ struct us_loop_t {
 
     char *outBuffer[1024];
     int queuedBuffersNum;// = 0;
+
+    // timeout and then
+    struct timespec timeout;
+    struct timeval then;
+
+    // statistics
+    int packets_out_of_order;
+    int healed_sockets;
+    int duplicated_packets;
 };
 
 // passing data from ip to tcp layer
