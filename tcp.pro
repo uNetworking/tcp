@@ -11,7 +11,8 @@ SOURCES += \
 
 HEADERS += \
     Packets.h \
-    internal.h
+    internal.h \
+    uthash.h
 
 QMAKE_CXXFLAGS += -fsanitize=address
 LIBS += -lasan

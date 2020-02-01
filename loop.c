@@ -8,7 +8,54 @@
 
 // should be more like read() from a file
 int fetchPackageBatch(struct us_loop_t *loop) {
-    return recvmmsg(loop->fd, loop->msgs, 500, MSG_WAITFORONE, NULL);
+    return recvmmsg(loop->fd, loop->msgs, 1024, MSG_WAITFORONE, NULL);
+}
+
+void releaseSend(struct us_loop_t *loop) {
+        // release aka send
+    if (loop->queuedBuffersNum) {
+
+        //printf("Sending %d packages\n", loop->queuedBuffersNum);
+
+        struct mmsghdr sendVec[1024] = {};
+        struct sockaddr_in sin[1024] = {};
+
+        int packages = loop->queuedBuffersNum;
+
+        for (int i = 0; i < loop->queuedBuffersNum; i++) {
+
+            IpHeader *ipHeader = (IpHeader *) loop->outBuffer[i];
+            struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
+
+            int length = IpHeader_getTotalLength(ipHeader);//ipHeader->getTotalLength();
+
+            sin[i].sin_family = AF_INET;
+            sin[i].sin_port = tcpHeader->header.dest;
+            sin[i].sin_addr.s_addr = ipHeader->daddr;
+
+            loop->messages[i].iov_base = ipHeader;
+            loop->messages[i].iov_len = length;
+
+            // send out of order!
+//            sendVec[i].msg_hdr.msg_iov = &messages[packages - i - 1];
+//            sendVec[i].msg_hdr.msg_iovlen = 1;
+
+//            sendVec[i].msg_hdr.msg_name = &sin[packages - i - 1];
+//            sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
+
+            sendVec[i].msg_hdr.msg_iov = &loop->messages[i];
+            sendVec[i].msg_hdr.msg_iovlen = 1;
+
+            sendVec[i].msg_hdr.msg_name = &sin[i];
+            sendVec[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_in);
+
+        }
+
+        sendmmsg(loop->fd, sendVec, loop->queuedBuffersNum, 0);
+        loop->queuedBuffersNum = 0;
+
+        //std::cout << "Sent now" << std::endl;
+    }
 }
 
 IpHeader *getIpPacket(struct us_loop_t *loop, int index, unsigned int *length) {
@@ -23,9 +70,11 @@ IpHeader *getIpPacket(struct us_loop_t *loop, int index, unsigned int *length) {
 }
 
 IpHeader *getIpPacketBuffer(struct us_loop_t *loop) {
-    if (loop->queuedBuffersNum == 500) {
+    if (loop->queuedBuffersNum == 1024) {
         //std::cout << "Releasing IP buffers in getIpPacketBuffer" << std::endl;
-        //releasePackageBatch();
+        printf("SENDING OVERFLOW!\n");
+        exit(0);
+        releaseSend(loop);
     }
 
     return (IpHeader *) loop->outBuffer[loop->queuedBuffersNum++];
@@ -56,14 +105,14 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
         exit(0);
     }
 
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 1024; i++) {
         loop->buffer[i] = malloc(1024 * 32);
         loop->outBuffer[i] = malloc(1024 * 32);
     }
 
     printf("Loop's first out buffer is: %p\n", loop->outBuffer[0]);
 
-    const int VLEN = 500;
+    const int VLEN = 1024;
 
     memset(loop->msgs, 0, sizeof(loop->msgs));
     for (int i = 0; i < VLEN; i++) {
@@ -104,11 +153,42 @@ void *us_loop_ext(struct us_loop_t *loop) {
 // we have this somewhere
 extern struct us_socket_t *global_s;
 
+/* Either the loop holds all sockets or the socket context do? */
+#include "uthash.h"
+
+/*
+ *
+ * #define HASH_FIND_INT(head,findint,out)                                          \
+    HASH_FIND(hh,head,findint,sizeof(int),out)*/
+
+// us_internal_socket_context_read_tcp borde returnera själva socketen antingen utbytt, skapad eller så
+// sen kan vi i loopen hålla koll på alla sockets i en hashmap från 64+32 = 96 bit hash key = 12 bytes
+
+
+
+// this is the hash table
+struct us_socket_t *sockets = NULL;
+
+void remove_socket(struct us_socket_t *s) {
+
+    HASH_DEL(sockets, s);
+
+    free(s);
+
+    global_s = 0;
+}
+
 void us_loop_run(struct us_loop_t *loop) {
     printf("Getting ip packets now\n");
 
     while (1) {
         int messages = fetchPackageBatch(loop);
+
+        // this should never happen, if it does we read too slowly and lag behind (but should be reset whatever we miss anyways)
+        if (messages == 1024) {
+            printf("WE ARE NOT READING PACKAGES FAST ENOUGH!\n");
+            exit(0);
+        }
 
         for (int i = 0; i < messages; i++) {
             unsigned int length;
@@ -130,7 +210,32 @@ void us_loop_run(struct us_loop_t *loop) {
                     for (struct us_listen_socket_t *listen_socket = context->listen_socket; listen_socket; ) {
 
                         if (listen_socket->port == TcpHeader_getDestinationPort(tcpHeader)) {
-                            us_internal_socket_context_read_tcp(listen_socket->context, ipHeader, tcpHeader, length);
+                            //global_s = 0;
+
+                            us_internal_socket_context_read_tcp(NULL, listen_socket->context, ipHeader, tcpHeader, length);
+
+
+                            // vi kommer att ha ändrat global_s om det finns en ny socket!
+
+                            if (global_s) {
+
+
+                                struct SOCKET_KEY key = {
+                                    TcpHeader_getSourcePort(tcpHeader),
+                                    TcpHeader_getDestinationPort(tcpHeader),
+                                    ipHeader->saddr,
+                                    ipHeader->daddr
+                                };
+
+                                global_s->key = key;
+
+                                HASH_ADD(hh, sockets, key, sizeof(struct SOCKET_KEY), global_s);
+
+
+
+                                global_s = 0;
+                            }
+
                         }
 
                         /* We only have one listen socket for now */
@@ -138,58 +243,24 @@ void us_loop_run(struct us_loop_t *loop) {
                     }
                 }
             } else {
-                /* Step 1: is this TCP packet from our global socket? */
-                if (global_s) {
 
-                    /* Check if this packet is for our socket */
-                    if (global_s->networkIp == ipHeader->saddr && global_s->hostPort == TcpHeader_getSourcePort(tcpHeader) && global_s->networkDestinationIp == ipHeader->daddr && global_s->hostDestinationPort == TcpHeader_getDestinationPort(tcpHeader)) {
-                        us_internal_socket_context_read_tcp(global_s->context, ipHeader, tcpHeader, length);
-                    }
+                struct us_socket_t *s;
+                struct SOCKET_KEY key = {
+                    TcpHeader_getSourcePort(tcpHeader),
+                    TcpHeader_getDestinationPort(tcpHeader),
+                    ipHeader->saddr,
+                    ipHeader->daddr
+                };
 
+                HASH_FIND(hh, sockets, &key, sizeof(struct SOCKET_KEY), s);
+
+                if (s) {
+                    us_internal_socket_context_read_tcp(s, s->context, ipHeader, tcpHeader, length);
                 }
+
             }
         }
 
-        // release aka send
-        if (loop->queuedBuffersNum) {
-            struct mmsghdr sendVec[500] = {};
-            struct sockaddr_in sin[500] = {};
-
-            int packages = loop->queuedBuffersNum;
-
-            for (int i = 0; i < loop->queuedBuffersNum; i++) {
-
-                IpHeader *ipHeader = (IpHeader *) loop->outBuffer[i];
-                struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
-
-                int length = IpHeader_getTotalLength(ipHeader);//ipHeader->getTotalLength();
-
-                sin[i].sin_family = AF_INET;
-                sin[i].sin_port = tcpHeader->header.dest;
-                sin[i].sin_addr.s_addr = ipHeader->daddr;
-
-                loop->messages[i].iov_base = ipHeader;
-                loop->messages[i].iov_len = length;
-
-                // send out of order!
-    //            sendVec[i].msg_hdr.msg_iov = &messages[packages - i - 1];
-    //            sendVec[i].msg_hdr.msg_iovlen = 1;
-
-    //            sendVec[i].msg_hdr.msg_name = &sin[packages - i - 1];
-    //            sendVec[i].msg_hdr.msg_namelen = sizeof(sockaddr_in);
-
-                sendVec[i].msg_hdr.msg_iov = &loop->messages[i];
-                sendVec[i].msg_hdr.msg_iovlen = 1;
-
-                sendVec[i].msg_hdr.msg_name = &sin[i];
-                sendVec[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_in);
-
-            }
-
-            sendmmsg(loop->fd, sendVec, loop->queuedBuffersNum, 0);
-            loop->queuedBuffersNum = 0;
-
-            //std::cout << "Sent now" << std::endl;
-        }
+        releaseSend(loop);
     }
 }

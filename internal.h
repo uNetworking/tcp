@@ -28,7 +28,20 @@ struct us_listen_socket_t {
     int port;
 };
 
+#include "uthash.h"
+
+// 96 bit, 12 bytes (for now duplicated)
+struct SOCKET_KEY {
+    uint16_t srcPort, dstPort;
+    uint32_t srcIp, dstIp;
+};
+
 struct us_socket_t {
+
+    struct SOCKET_KEY key;
+
+    // debug
+    int packets;
 
 
     //struct us_socket_t *next;
@@ -65,6 +78,9 @@ struct us_socket_t {
     int closed;
     int shutdown;
     int wants_writable;
+
+
+    UT_hash_handle hh;
 };
 
 void us_internal_socket_context_send_packet(struct us_socket_context_t *context, uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
@@ -114,19 +130,19 @@ struct us_loop_t {
     // vi har
 
     int fd;
-    char *buffer[500];
-    size_t length[500];
-    struct mmsghdr msgs[500];
-    struct iovec iovecs[500];
+    char *buffer[1024];
+    size_t length[1024];
+    struct mmsghdr msgs[1024];
+    struct iovec iovecs[1024];
 
-    struct iovec messages[500];
+    struct iovec messages[1024];
 
-    char *outBuffer[500];
+    char *outBuffer[1024];
     int queuedBuffersNum;// = 0;
 };
 
 // passing data from ip to tcp layer
 
-void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length);
+void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length);
 
 #endif // INTERNAL_H

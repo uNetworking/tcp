@@ -22,16 +22,16 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 }
 
 void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds) {
-    printf("socket timeout: %d\n", seconds);
+    //printf("socket timeout: %d\n", seconds);
 }
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
-    printf("socket ext: %p\n", s + 1);
+    //printf("socket ext: %p\n", s + 1);
     return s + 1;
 }
 
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s) {
-    printf("Socket context: %p\n", s->context);
+    //printf("Socket context: %p\n", s->context);
     return s->context;
 }
 

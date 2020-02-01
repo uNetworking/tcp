@@ -126,7 +126,7 @@ struct us_socket_t *add_socket() {
     }
 
     // allokera mer!
-    global_s = malloc(sizeof(struct us_socket_t) + 256);
+    global_s = malloc(sizeof(struct us_socket_t) + /*256*/512);
     // init the socket
 
     global_s->closed = 0;
@@ -135,29 +135,18 @@ struct us_socket_t *add_socket() {
     return global_s;
 }
 
-void remove_socket(struct us_socket_t *s) {
-    free(s);
-
-    global_s = 0;
-}
+void remove_socket(struct us_socket_t *s);
 
 //us_socket_write can take identifier to merge common sends into one
 
 
 // pass tcp data to the context - call it read_packet, send_packet
-void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length) {
+void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length) {
 
-    printf("Reading TCP packet!\n");
-
-    // lookup socket?
-    struct us_socket_t *s = lookup_socket(ipHeader->saddr, ntohs(tcpHeader->header.source), ipHeader->daddr, ntohs(tcpHeader->header.dest));
-    // this socket did not even exist!
     if (!s) {
-        printf("We did not have this socket beore!\n");
-
-        // is this a syn or ack?
+        /* Is this a SYN but not and ACK? */
         if (tcpHeader->header.syn && !tcpHeader->header.ack) {
-
+                /* Allocate the socket */
                 uint32_t hostAck = ntohl(tcpHeader->header.seq);
                 uint32_t hostSeq = rand();
 
@@ -174,22 +163,21 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
                 s->networkDestinationIp = ipHeader->daddr;
                 s->hostDestinationPort = TcpHeader_getDestinationPort(tcpHeader);
 
+                /* Debug */
+                s->packets = 1; // obviously we got SYN
 
+                /* Send syn, ack */
                 us_internal_socket_context_send_packet(context, hostSeq, hostAck + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 1, 0, 0, NULL, 0);
-
-                // give away their ip to callback
-                //context->on_open(s, 1, &s->networkIp, 4);
+        
+                /* Now we will return, and global_s is added to the hash table in loop */
         } else {
-            //std::cout << "Dropping uninvited packet" << std::endl;
-
+            /* All other packtes in this state are uninvited */
             printf("Dropping uninvited packet\n");
         }
-
-
     } else {
-        // we do have this socket already
 
-        printf("We dod have this socket!\n");
+        // SYN allokerar socketen, alla nästkommande paket räknas upp
+        s->packets++;
 
         if (tcpHeader->header.fin) {
 
@@ -201,53 +189,39 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
             // send fin, ack back
             s->hostAck += 1;
 
-
             us_internal_socket_context_send_packet(context, s->hostSeq, s->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 0, 1, 0, NULL, 0);
-
 
             printf("Deleting socket now!\n");
             remove_socket(s);
 
-        } else if (tcpHeader->header.ack) {
+            /* Cannot fall through to data when deleted */
+            return;
 
-            printf("We got ack!\n");
+        } else if (tcpHeader->header.ack) {
 
             if (s->state == SOCKET_ESTABLISHED) {
                 // why thank you
             } else if (s->state == SOCKET_SYN_ACK_SENT) {
 
-                // note: PSH, ACK with data can act as connection ACK (this is probably good)
-                // let's just not allow it for now
-                if (!tcpHeader->header.psh) {
+                /* Here we are established, and we may also get data */
+                uint32_t seq = ntohl(tcpHeader->header.seq);
+                uint32_t ack = ntohl(tcpHeader->header.ack_seq);
 
-                    printf("somehwre!\n");
+                if (s->hostAck + 1 == seq && s->hostSeq + 1 == ack) {
+                    s->hostAck++;
+                    s->hostSeq++;
+                    s->state = SOCKET_ESTABLISHED;
 
-                    uint32_t seq = ntohl(tcpHeader->header.seq);
-                    uint32_t ack = ntohl(tcpHeader->header.ack_seq);
-
-                    if (s->hostAck + 1 == seq && s->hostSeq + 1 == ack) {
-                        s->hostAck++;
-                        s->hostSeq++;
-                        s->state = SOCKET_ESTABLISHED;
-
-                        //onconnection(socket);
-
-                        printf("Emitting open now!\n");
-                        context->on_open(s, 0, "nej!", 0); // I guess this is for outbound connections
-
-                        printf("done with open!\n");
-                        return;
-
-                        // empty eventual buffering hindered so far by the lower seq and ack numbers!
-
-                    } else {
-                        //std::cout << "Server ACK is wrong!" << std::endl;
-                        printf("Server ack is wrong!\n");
-                    }
-
+                    /* Emit open event */
+                    context->on_open(s, 0, "nej!", 0);
+                } else {
+                    printf("Server ack is wrong!\n");
+                    exit(0);
                 }
 
             } else if (tcpHeader->header.syn && s->state == SOCKET_SYN_SENT) {
+
+                // this is for outbound connections
 
                 printf("Socket syn sent!\n");
 
@@ -264,9 +238,6 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
 
                     us_internal_socket_context_send_packet(context, s->hostSeq, s->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 0, 0, 0, NULL, 0);
 
-
-                    //onconnection(socket);
-
                     context->on_open(s, 0, 0, 0);
 
                     return;
@@ -274,21 +245,19 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
                     // can data be ready to dispatch here? Don't think so?
                 } else {
                     printf("client ack is wrong!\n");
-                    //std::cout << "CLIENT ACK IS WRONG!" << std::endl;
                 }
             }
         }
 
-        // data handler
+        /* Data handler runs for everything falling through from above */
         int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->header.doff * 4) - (ipHeader->ihl * 4);
         if (tcpdatalen) {
             char *buf = (char *) ipHeader;
 
-            printf("We got data!\n");
-
             // how big can an IP packet be?
             if (buf + tcpdatalen - (char *) ipHeader > length) {
                 printf("ERROR! length mismatch!\n");
+                exit(0);
                 //std::cout << "ERROR: lengths mismatch!" << std::endl;
                 //std::cout << "tcpdatalen: " << tcpdatalen << std::endl;
                 //std::cout << "ip total length: " << ipHeader->getTotalLength() << std::endl;
@@ -296,107 +265,50 @@ void us_internal_socket_context_read_tcp(struct us_socket_context_t *context, Ip
                 //exit(-1);
             }
 
-            // determine cancer mode or not
-
-            // is this segment out of sequence?
+            /* Is this segment out of sequence? */
             uint32_t seq = ntohl(tcpHeader->header.seq);
-            //static std::chrono::system_clock::time_point then;
             if (s->hostAck != seq) {
 
-                printf("we are in cancer mode! out of sync!\n");
-
+                /* We have already seen this packet, calm down, the client did not get ack in time */
                 if (s->hostAck > seq) {
-
+                    // getting a duplicate, something we already seen, this should mean we did not answer in time or not at all
                     printf("GOT DUPLICATE!\n");
+                    exit(0);
 
-                    // already seen data, ignore
-                    //std::cout << "GOT DUPLICATE!" << std::endl;
+                    /* Should probably send a new ack */
+                    
+                } else {
+                    /* We got a packet that is supposed to be for the future, we need to buffer it up */
+                    uint32_t future = (seq - s->hostAck);
+                    printf("We got a packet that is %d bytes in the future as socket's %d packet so far including SYN\n", future, s->packets);
 
-                    // if this is sent, then it melts down completely
-                    //Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
+
+                    // we should mark this socket with the highest seen packet, then tell the user when we "healed" from this out of order
+
+                    /* For now we just throw this packet to hell */
                     return;
+
+                    /* This should be buffered up and released when the missing piece reached us */
+                    exit(0);
                 }
-
-                /*if (!expectingSeq) {
-                    expectingSeq = socket->hostAck;
-                    std::cout << "Expecting package with seq: " << expectingSeq << std::endl << std::endl;
-                    then = std::chrono::system_clock::now();
-                }*/
-
-                // buffer this out of seq segment
-     //           Socket::Block block;
-      //          block.seqStart = seq;
-       //         block.buffer.append(buf + ipHeader->ihl * 4 + tcpHeader->doff * 4, tcpdatalen);
-       //         socket->blocks.push_back(block);
-
-                // send dup ack
-       //         Socket::sendPacket(socket->hostSeq, socket->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->source), ntohs(tcpHeader->dest), true, false, false, false, nullptr, 0);
             } else {
-
-                printf("Emmitting data!\n");
-
+                /* Increase by length of data */
                 s->hostAck += tcpdatalen;
                 uint32_t lastHostSeq = s->hostSeq;
 
-                // emit data
+                /* Emit data, changing socket if necessary */
                 s = context->on_data(s, buf + ipHeader->ihl * 4 + tcpHeader->header.doff * 4, tcpdatalen);
 
-                // även globala socketen ska ändras!
-                global_s = s;
-
-                printf("We have potentially changed socket now!\n");
-
-                //int blockedSegments = socket->blocks.size();
-
-                //if (socket->blocks.size()) {
-                    //int ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - then).count();
-                    //std::cout << ms << "ms, Received outstanding package with seq: " << expectingSeq << std::endl;
-
-//                restart:
-//                for (auto it = socket->blocks.begin(); it != socket->blocks.end(); ) {
-//                    if (socket->hostAck == it->seqStart) {
-
-//                        // handle data
-//                        socket->hostAck += it->buffer.length();
-//                        socketStates[socket->applicationState].ondata(socket, (char *) it->buffer.data(), it->buffer.length());
-
-//                        // kan inte bara fortsätta, måste börja om!
-//                        it = socket->blocks.erase(it);
-//                        goto restart;
-//                    } else {
-//                        it++;
-//                    }
-//                }
-
-//                if (socket->blocks.size() != blockedSegments) {
-//                    std::cout << "Released blocked up segments to application, previously " << blockedSegments << ", now only " << socket->blocks.size() << std::endl;
-//                    blockedSegments = socket->blocks.size();
-//                }
-
+                /* If we did not send anything in the callback, send and ack (we're not piggybacking) */
                 if (lastHostSeq == s->hostSeq) {
                     us_internal_socket_context_send_packet(context, s->hostSeq, s->hostAck, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 0, 0, 0, NULL, 0);
                 }
-
-//                // exra check: make sure to remove buffers that have already been acked!
-//                for (auto it = socket->blocks.begin(); it != socket->blocks.end(); ) {
-//                    if (socket->hostAck >= it->seqStart + it->buffer.length()) {
-//                        it = socket->blocks.erase(it);
-//                    } else {
-//                        it++;
-//                    }
-//                }
-
-//                if (socket->blocks.size() != blockedSegments) {
-//                    //std::cout << "Cut away already acked blocked segments, previously " << blockedSegments << ", now only " << socket->blocks.size() << std::endl;
-//                }
             }
         } else {
-            printf("We got some packet, maybe ack, with no data, tcp-keep alive?\n");
+            /* We got something here, ack, or something we don't care about */
         }
-
     }
 }
-
 
 struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *loop, int ext_size, struct us_socket_context_options_t options) {
     struct us_socket_context_t *socket_context = (struct us_socket_context_t *) malloc(sizeof(struct us_socket_context_t) + ext_size);
@@ -477,12 +389,13 @@ struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *co
 }
 
 struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int ext_size) {
-    struct us_socket_t *new_s = (struct us_socket_t *) realloc(s, sizeof(struct us_socket_t) + ext_size);
-    new_s->context = context;
 
-    printf("Adopting socket now!\n");
+    // FOR NOW WE DO NOT SUPPORT CHANGING SOCKET, SINCE WE DO NOT SUPPORT UPDATING THE HASH TABLE YET!
 
-    return new_s;
+    //struct us_socket_t *new_s = (struct us_socket_t *) realloc(s, sizeof(struct us_socket_t) + ext_size);
+    /*new_*/s->context = context;
+
+    return /*new_*/s;
 }
 
 struct us_socket_context_t *us_create_child_socket_context(int ssl, struct us_socket_context_t *context, int context_ext_size) {
