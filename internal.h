@@ -151,6 +151,7 @@ struct us_loop_t {
     int packets_out_of_order;
     int healed_sockets;
     int duplicated_packets;
+    unsigned long long packets_received;
 };
 
 // passing data from ip to tcp layer

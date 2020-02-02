@@ -23,6 +23,8 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
 void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds) {
     //printf("socket timeout: %d\n", seconds);
+
+    // denna behöver ske
 }
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {

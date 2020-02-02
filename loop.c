@@ -13,6 +13,7 @@ void print_statistics(struct us_loop_t *loop) {
     printf("Packets out of order so far: %d\n", loop->packets_out_of_order);
     printf("Healed sockets so far: %d\n", loop->healed_sockets);
     printf("Duplicated packets: %d\n\n", loop->duplicated_packets);
+    printf("Packets received: %lld\n", loop->packets_received);
 }
 
 #include <sys/time.h>
@@ -75,6 +76,13 @@ void releaseSend(struct us_loop_t *loop) {
             if (tmp > 0) {
                 sent += tmp;
             }
+
+            if (tmp != loop->queuedBuffersNum) {
+                printf("COULD NOT SEND ALL PACKETS WITHOUT BLOCKING!\n");
+                exit(0);
+            }
+
+            break;
         }
         
 
@@ -125,6 +133,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->packets_out_of_order = 0;
     loop->healed_sockets = 0;
     loop->duplicated_packets = 0;
+    loop->packets_received = 0;
 
     loop->epfd = epoll_create1(0);
 
@@ -342,3 +351,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
     }
 }
+
+
+// vi behöver få in timers, och svepa över de websockets som inte får något meddelande i tid - som en absolut måttstock på stabilitet oavsett outof order etc
+

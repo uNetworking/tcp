@@ -177,6 +177,9 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
         }
     } else {
 
+        // öka paket för statistik
+        context->loop->packets_received++;
+
         // SYN allokerar socketen, alla nästkommande paket räknas upp
         s->packets++;
 
@@ -410,8 +413,75 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
     free(ls);
 }
 
+struct NetworkAddress {
+    uint32_t addr;
+    uint16_t port;
+};
+
+// networkAddress, hostPort
+struct NetworkAddress networkAddressFromString(char *address) {
+    unsigned int addr[5];
+    sscanf(address, "%d.%d.%d.%d:%d", &addr[0], &addr[1], &addr[2], &addr[3], &addr[4]);
+
+    uint32_t networkAddress = addr[0] << 24 | addr[1] << 16 | addr[2] << 8 | addr[3];
+    struct NetworkAddress na = {htonl(networkAddress), addr[4]};
+
+    return na;
+}
+
+/*void Context::connect(char *source, char *destination, void *userData)
+{
+    // these should return an Endpoint straight up
+    struct NetworkAddress sourceAddress = networkAddressFromString(source);
+    struct NetworkAddress destinationAddress = networkAddressFromString(destination);
+
+    Endpoint endpoint = {destinationAddress.first, destinationAddress.second, sourceAddress.first, sourceAddress.second};
+
+    uint32_t hostSeq = rand();
+    sockets[endpoint] = new Socket({nullptr, destinationAddress.first, destinationAddress.second, sourceAddress.first, sourceAddress.second, 0, hostSeq, Socket::SYN_SENT});
+
+    Socket::sendPacket(hostSeq, 0, destinationAddress.first, sourceAddress.first, destinationAddress.second, sourceAddress.second, false, true, false, false, nullptr, 0);
+    ip->releasePackageBatch();
+}*/
+
+// connect sends a syn but ends up in similar path as the rest pretty quickly
 struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
-    //printf("us_socket_context_connect\n");
+    printf("us_socket_context_connect\n");
+
+    // these should return an Endpoint straight up
+    struct NetworkAddress sourceAddress = networkAddressFromString("127.0.0.1:45000");
+    struct NetworkAddress destinationAddress = networkAddressFromString("127.0.0.1:4000");
+
+    // we use 127.0.0.1 as our ip always, and we pick ephemeral port from a list
+
+    //uint32_t clientIP = 123123123;
+    //uint16_t clientPort = 12330;
+
+    /* Allocate the socket */
+    //uint32_t hostAck = ntohl(tcpHeader->header.seq);
+    /*uint32_t hostSeq = rand();
+
+    struct us_socket_t *s = add_socket();
+
+    s->state = SOCKET_SYN_ACK_SENT;
+    s->context = context;
+    s->hostAck = hostAck;
+    s->hostSeq = hostSeq;
+
+    s->networkIp = ipHeader->saddr;
+    s->hostPort = TcpHeader_getSourcePort(tcpHeader);
+
+    s->networkDestinationIp = ipHeader->daddr;
+    s->hostDestinationPort = TcpHeader_getDestinationPort(tcpHeader);
+
+    /* Debug */
+    //s->packets = 1; // obviously we got SYN
+    //s->mostOutOfSync = 0;
+
+    /* Send syn, ack */
+    //us_internal_socket_context_send_packet(context, hostSeq, 0, destinationAddress.addr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 1, 0, 0, NULL, 0);
+
+
 
     return 0;
 }
