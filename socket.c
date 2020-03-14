@@ -22,9 +22,12 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 }
 
 void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds) {
-    //printf("socket timeout: %d\n", seconds);
-
-    // denna behöver ske
+    if (seconds) {
+        unsigned short timeout_sweeps = (unsigned short) (0.5f + ((float) seconds) / ((float) LIBUS_TIMEOUT_GRANULARITY));
+        s->timeout = timeout_sweeps ? timeout_sweeps : 1;
+    } else {
+        s->timeout = 0;
+    }
 }
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
@@ -64,6 +67,8 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s) {
     s->closed = 1;
 
     /* Add us to the close list */
+
+    printf("closing socket is not implemented!\n");
 
     return s;
 }

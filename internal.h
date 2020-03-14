@@ -8,6 +8,10 @@
 
 #include "Packets.h"
 
+void us_internal_socket_context_link(struct us_socket_context_t *context, struct us_socket_t *s);
+void us_internal_timer_sweep(struct us_loop_t *loop);
+void us_internal_loop_link(struct us_loop_t *loop, struct us_socket_context_t *context);
+
 struct us_socket_context_t {
     alignas(16) struct us_loop_t *loop;
 
@@ -15,14 +19,19 @@ struct us_socket_context_t {
     struct us_socket_t *(*on_close)(struct us_socket_t *s);
     struct us_socket_t *(*on_data)(struct us_socket_t *s, char *data, int length);
     struct us_socket_t *(*on_writable)(struct us_socket_t *s);
-    struct us_socket_t *(*on_timeout)(struct us_socket_t *s);
+    struct us_socket_t *(*on_socket_timeout)(struct us_socket_t *s);
     struct us_socket_t *(*on_end)(struct us_socket_t *s);
 
     /* Socket contexts form a link */
     struct us_socket_context_t *next;
+    struct us_socket_context_t *prev;
 
     /* What are our listen_sockets */
     struct us_listen_socket_t *listen_socket;
+
+
+    struct us_socket_t *head;
+    struct us_socket_t *iterator;
 };
 
 struct us_listen_socket_t {
@@ -87,6 +96,9 @@ struct us_socket_t {
     int shutdown;
     int wants_writable;
 
+    unsigned short timeout;
+
+    struct us_socket_t *prev, *next;
 
     UT_hash_handle hh;
 };
@@ -132,6 +144,8 @@ struct us_loop_t {
 
     // vi har
 
+    int send_fd;
+
     int fd, epfd, timer;
     char *buffer[1024];
     size_t length[1024];
@@ -152,6 +166,10 @@ struct us_loop_t {
     int healed_sockets;
     int duplicated_packets;
     unsigned long long packets_received;
+
+    // linked list of all contexts
+    struct us_socket_context_t *head;
+    struct us_socket_context_t *iterator;
 };
 
 // passing data from ip to tcp layer

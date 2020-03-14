@@ -61,6 +61,13 @@ IpHeader *getIpPacketBuffer(struct us_loop_t *loop);
 void us_internal_socket_context_send_packet(struct us_socket_context_t *context, uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
                  int hostSourcePort, int flagAck, int flagSyn, int flagFin, int flagRst, char *data, size_t length) {
 
+    // for testing: send RST when sending FIN
+    // the iptables rule filters out the packet when RST flag is set!
+    if (flagFin) {
+        //flagRst = 1;
+    }
+
+
     struct us_loop_t *loop = context->loop;
 
     IpHeader *ipHeader = getIpPacketBuffer(loop);
@@ -131,6 +138,9 @@ struct us_socket_t *add_socket() {
 
     global_s->closed = 0;
     global_s->shutdown = 0;
+
+    global_s->prev = 0;
+    global_s->next = 0;
 
     return global_s;
 }
@@ -215,6 +225,9 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                     s->hostAck++;
                     s->hostSeq++;
                     s->state = SOCKET_ESTABLISHED;
+
+                    /* link it with this context for sweeps */
+                    us_internal_socket_context_link(context, s);
 
                     /* Emit open event */
                     context->on_open(s, 0, "nej!", 0);
@@ -345,6 +358,17 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
     }
 }
 
+void us_internal_socket_context_link(struct us_socket_context_t *context, struct us_socket_t *s) {
+    s->context = context;
+    s->timeout = 0;
+    s->next = context->head;
+    s->prev = 0;
+    if (context->head) {
+        context->head->prev = s;
+    }
+    context->head = s;
+}
+
 struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *loop, int ext_size, struct us_socket_context_options_t options) {
     struct us_socket_context_t *socket_context = (struct us_socket_context_t *) malloc(sizeof(struct us_socket_context_t) + ext_size);
 
@@ -355,6 +379,12 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     /* Link loop to socket contexts */
     socket_context->next = loop->context;
     loop->context = socket_context;
+
+    socket_context->head = 0;
+    socket_context->iterator = 0;
+    socket_context->prev = 0;
+
+    us_internal_loop_link(loop, socket_context);
 
     return socket_context;
 }
@@ -380,7 +410,7 @@ void us_socket_context_on_writable(int ssl, struct us_socket_context_t *context,
 }
 
 void us_socket_context_on_timeout(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_timeout)(struct us_socket_t *s)) {
-    context->on_timeout = on_timeout;
+    context->on_socket_timeout = on_timeout;
 }
 
 void us_socket_context_on_end(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_end)(struct us_socket_t *s)) {
@@ -445,7 +475,7 @@ struct NetworkAddress networkAddressFromString(char *address) {
 }*/
 
 // connect sends a syn but ends up in similar path as the rest pretty quickly
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
+struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *interface, int options, int socket_ext_size) {
     printf("us_socket_context_connect\n");
 
     // these should return an Endpoint straight up

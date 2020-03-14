@@ -72,17 +72,17 @@ void releaseSend(struct us_loop_t *loop) {
 
         // we just block until we're done
         while (sent != loop->queuedBuffersNum) {
-            int tmp = sendmmsg(loop->fd, &sendVec[sent], loop->queuedBuffersNum - sent, 0);
+            int tmp = sendmmsg(loop->send_fd, &sendVec[sent], loop->queuedBuffersNum - sent, 0);
             if (tmp > 0) {
                 sent += tmp;
             }
 
-            if (tmp != loop->queuedBuffersNum) {
+            /*if (tmp != loop->queuedBuffersNum) {
                 printf("COULD NOT SEND ALL PACKETS WITHOUT BLOCKING!\n");
                 exit(0);
-            }
+            }*/
 
-            break;
+            //break;
         }
         
 
@@ -117,6 +117,16 @@ IpHeader *getIpPacketBuffer(struct us_loop_t *loop) {
 
 #include <sys/epoll.h>
 
+void us_internal_loop_link(struct us_loop_t *loop, struct us_socket_context_t *context) {
+    /* Insert this context as the head of loop */
+    context->next = loop->head;
+    context->prev = 0;
+    if (loop->head) {
+        loop->head->prev = context;
+    }
+    loop->head = context;
+}
+
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     struct us_loop_t *loop = (struct us_loop_t *) malloc(sizeof(struct us_loop_t) + ext_size);
 
@@ -127,6 +137,9 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->pre_cb = pre_cb;
     loop->post_cb = post_cb;
     loop->wakeup_cb = wakeup_cb;
+
+    loop->head = 0;
+    loop->iterator = 0;
 
     //
 
@@ -143,6 +156,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     event.events = EPOLLIN;
     event.data.u64 = 0; // mark the timer as 0
     epoll_ctl(loop->epfd, EPOLL_CTL_ADD, loop->timer, &event);
+
+    /* An IPPROTO_RAW socket is send only.  If you really want to receive
+       all IP packets, use a packet(7) socket with the ETH_P_IP protocol.
+       Note that packet sockets don't reassemble IP fragments, unlike raw
+       sockets. */
+
+    loop->send_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
 
     loop->fd = socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_TCP); // close(fd) vid stängning
     if (loop->fd == -1) {
@@ -256,6 +276,8 @@ void us_loop_run(struct us_loop_t *loop) {
 
                 print_statistics(loop);
 
+                us_internal_timer_sweep(loop);
+
                 uint64_t buf;
                 read(loop->timer, &buf, 8);
             }
@@ -355,3 +377,24 @@ void us_loop_run(struct us_loop_t *loop) {
 
 // vi behöver få in timers, och svepa över de websockets som inte får något meddelande i tid - som en absolut måttstock på stabilitet oavsett outof order etc
 
+void us_internal_timer_sweep(struct us_loop_t *loop) {
+    for (loop->iterator = loop->head; loop->iterator; loop->iterator = loop->iterator->next) {
+
+        struct us_socket_context_t *context = loop->iterator;
+        for (context->iterator = context->head; context->iterator; ) {
+
+            struct us_socket_t *s = context->iterator;
+            if (s->timeout && --(s->timeout) == 0) {
+
+                context->on_socket_timeout(s);
+
+                /* Check for unlink / link */
+                if (s == context->iterator) {
+                    context->iterator = s->next;
+                }
+            } else {
+                context->iterator = s->next;
+            }
+        }
+    }
+}
