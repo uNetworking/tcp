@@ -5,12 +5,101 @@
 
 #include "internal.h"
 
+/* Static timer info */
+struct us_internal_socket_timer_t {
+    struct us_socket_t *s;
+    int ticks;
+    /* For now we have a callback */
+    void (*cb)(struct us_socket_t *);
+};
+
+// per loop, per application
+struct us_internal_socket_timer_t *timers = 0;
+int num_timers = 1000000;
+
+void us_internal_socket_timeout(struct us_internal_socket_timer_t *timer);
+
+
+/* Timer logic could be separate module */
+void us_internal_small_tick() {
+
+    /* Init timers */
+    if (timers == 0) {
+        timers = calloc(1000000, sizeof(struct us_internal_socket_timer_t));
+    }
+
+    /* Sweep them up to num_timers */
+    for (int i = 0; i < num_timers; i++) {
+        /* Is this a gap? */
+        if (timers[i].s && timers[i].ticks) {
+            if (--timers[i].ticks == 0) {
+                /* Timer has triggered (this may rearm the timer but only itself no other socket?) */
+                us_internal_socket_timeout(&timers[i]);
+            }
+        }
+    }
+
+}
+
+/* Arms or resets a timer based on increments of 250ms.
+   Settings to 0 disables the timer.  */
+void us_internal_add_timeout(int ticks, struct us_socket_t *s) {
+
+    /* Sweep from start to end until a gap is there */
+    for (int i = 0; i < 1000000; i++) {
+        /* This slot is expired */
+        if (!timers[i].ticks) {
+            timers[i].ticks = ticks;
+            timers[i].s = s;
+            break;
+        }
+    }
+}
+
+void us_internal_remove_timeout(struct us_socket_t *s) {
+    for (int i = 0; i < 1000000; i++) {
+        /* This slot is expired */
+        if (timers[i].s == s) {
+            timers[i].ticks = 0;
+            timers[i].s = 0;
+            break;
+        }
+    }
+}
 
 // socket container with lookup
 
 #define SOCKET_SYN_ACK_SENT 1
 #define SOCKET_ESTABLISHED 2
 #define SOCKET_SYN_SENT 3
+
+/* Socket timeout handler cannot call us_internal_set_timeot but can access the timer directly */
+void us_internal_socket_timeout(struct us_internal_socket_timer_t *timer) {
+    //printf("Socket timed out!\n");
+
+    struct us_socket_t *s = timer->s;
+
+    if (timer->s->state == SOCKET_SYN_ACK_SENT) {
+        printf("RETRANSMITTING SYN,ACK!\n");
+
+        if (s->initialHostSeq != s->hostSeq) {
+            printf("RETRANSMITTING WRONG? %d vs. %d\n", s->initialHostSeq, s->hostSeq);
+        }
+
+        if (s->initialRemoteSeq != s->hostAck) {
+            printf("RETRANSMITTING WRONG (ack)? %d vs. %d\n", s->initialRemoteSeq, s->hostAck);
+        }
+
+        /* Send syn, ack */
+        us_internal_socket_context_send_packet(s->context, s->hostSeq, s->hostAck + 1, s->networkIp, s->networkDestinationIp, s->hostPort, s->hostDestinationPort, 1, 1, 0, 0, NULL, 0);
+
+        /* Remove this timer */
+        //timer->s = 0;
+
+        /* Rearm this timer */
+        timer->ticks = 2;
+    }
+}
 
 static unsigned long getPseudoHeaderSum(u_int32_t saddr, u_int32_t daddr, u_int16_t tcpLength) {
     struct PseudoHeader {
@@ -60,6 +149,11 @@ IpHeader *getIpPacketBuffer(struct us_loop_t *loop);
 // needs to know of the loop (IP)
 void us_internal_socket_context_send_packet(struct us_socket_context_t *context, uint32_t hostSeq, uint32_t hostAck, uint32_t networkDestIp, uint32_t networkSourceIp, int hostDestPort,
                  int hostSourcePort, int flagAck, int flagSyn, int flagFin, int flagRst, char *data, size_t length) {
+
+    if (rand() % 10 == 1) {
+        printf("Dropping packet now!\n");
+        return;
+    }
 
     // for testing: send RST when sending FIN
     // the iptables rule filters out the packet when RST flag is set!
@@ -113,6 +207,9 @@ void us_internal_socket_context_send_packet(struct us_socket_context_t *context,
 
     tcpHeader->header.check = csum_continue(getPseudoHeaderSum(networkSourceIp, networkDestIp, htons(sizeof(struct TcpHeader) + length))
                                      , (char *) tcpHeader, sizeof(struct TcpHeader) + length);
+
+    printf("%fs [Outgoing ", 100.0f * (float) clock() / (float) CLOCKS_PER_SEC);
+    print_packet(tcpHeader);
 }
 
 // this is the only socket we can keep for now
@@ -149,12 +246,43 @@ void remove_socket(struct us_socket_t *s);
 
 //us_socket_write can take identifier to merge common sends into one
 
+print_packet(struct TcpHeader *tcpHeader) {
+    printf("packet, seq %u, ack_seq: %u", ntohl(tcpHeader->header.seq), ntohl(tcpHeader->header.ack_seq));
+    /* Får vi någonsin RST? */
+    if (tcpHeader->header.rst) {
+        printf(", RST");
+    }
+    if (tcpHeader->header.syn) {
+        printf(", SYN");
+    }
+    if (tcpHeader->header.ack) {
+        printf(", ACK");
+    }
+    if (tcpHeader->header.fin) {
+        printf(", FIN");
+    }
+    /*if (tcpHeader->header.rst) {
+        printf("RST, ");
+    }*/
+    printf("]\n");
+}
+
 
 // pass tcp data to the context - call it read_packet, send_packet
 void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket_context_t *context, IpHeader *ipHeader, struct TcpHeader *tcpHeader, int length) {
 
+    /* Always debug the incoming packet in terms of flags and syn, syn_ack */
+    printf("%fs [Incoming ", 100.0f * (float) clock() / (float) CLOCKS_PER_SEC);
+    print_packet(tcpHeader);
+
+    /* Drop packets 10% */
+    if (rand() % 10 == 1) {
+        printf("Dropping packet now!\n");
+        return;
+    }
+
     if (!s) {
-        /* Is this a SYN but not and ACK? */
+        /* Is this a SYN but not an ACK? */
         if (tcpHeader->header.syn && !tcpHeader->header.ack) {
                 /* Allocate the socket */
                 uint32_t hostAck = ntohl(tcpHeader->header.seq);
@@ -162,10 +290,20 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
 
                 struct us_socket_t *s = add_socket();
 
+                // store initial numbers for debugging when shit happens
+                s->initialRemoteSeq = hostAck;
+                s->initialHostSeq = hostSeq;
+
                 s->state = SOCKET_SYN_ACK_SENT;
                 s->context = context;
                 s->hostAck = hostAck;
                 s->hostSeq = hostSeq;
+
+                /* If we are about to overflow */
+                if (s->hostAck > UINT32_MAX - 100) {
+                    printf("WE ARE GOING TO FLIP SOON!\n");
+                    exit(0);
+                }
 
                 s->networkIp = ipHeader->saddr;
                 s->hostPort = TcpHeader_getSourcePort(tcpHeader);
@@ -177,9 +315,17 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                 s->packets = 1; // obviously we got SYN
                 s->mostOutOfSync = 0;
 
+                // what was the initial hostAck of this socket? how many times did we retransmit? what is it now?
+                // did we retransmit wrong?
+
+                /* Test: We do not respond here, but in the timeout instead (we simulate dropping the SynAck) */
+
                 /* Send syn, ack */
-                us_internal_socket_context_send_packet(context, hostSeq, hostAck + 1, ipHeader->saddr, ipHeader->daddr, ntohs(tcpHeader->header.source), ntohs(tcpHeader->header.dest), 1, 1, 0, 0, NULL, 0);
-        
+                us_internal_socket_context_send_packet(s->context, s->hostSeq, s->hostAck + 1, s->networkIp, s->networkDestinationIp, s->hostPort, s->hostDestinationPort, 1, 1, 0, 0, NULL, 0);
+
+                /* We require an ACK within 500 ms, or we retransmit */
+                us_internal_add_timeout(2, s);
+
                 /* Now we will return, and global_s is added to the hash table in loop */
         } else {
             /* All other packtes in this state are uninvited */
@@ -187,11 +333,27 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
         }
     } else {
 
+        // what if we get an extra SYN here?
+        if (tcpHeader->header.syn) {
+            printf("GOT DUPLICATE SYN!\n");
+            return;
+        }
+
         // öka paket för statistik
         context->loop->packets_received++;
 
         // SYN allokerar socketen, alla nästkommande paket räknas upp
         s->packets++;
+
+        /*if (s->state == SOCKET_SYN_ACK_SENT) {
+            // if we get a SYN resent in this state, we know we lost it
+            if (tcpHeader->header.syn && !tcpHeader->header.ack) {
+                printf("WE WERE RESENT A SYN WHILE ALREADY IN SYN-ACK-SENT STATE!\n");
+                //us_internal_socket_context_read_tcp()
+                return;
+            }
+        }*/
+
 
         if (tcpHeader->header.fin) {
 
@@ -217,6 +379,8 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                 // why thank you
             } else if (s->state == SOCKET_SYN_ACK_SENT) {
 
+                // if our syn-ack is lost, we believe we sent it but we haven't
+
                 /* Here we are established, and we may also get data */
                 uint32_t seq = ntohl(tcpHeader->header.seq);
                 uint32_t ack = ntohl(tcpHeader->header.ack_seq);
@@ -225,6 +389,9 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                     s->hostAck++;
                     s->hostSeq++;
                     s->state = SOCKET_ESTABLISHED;
+
+                    /* We are now established, remove timeout for socket */
+                    us_internal_remove_timeout(s);
 
                     /* link it with this context for sweeps */
                     us_internal_socket_context_link(context, s);
@@ -239,7 +406,34 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                     printf("Sockets open: %d\n", sockets);
 
                 } else {
-                    printf("Server ack is wrong!\n");
+
+                    // vi får fel ack från clienten, förmodligen skickar vi fel seq i retransmit - jämför mot initial?
+
+                    // dessa stämmer
+                    printf("Expected: %d got: %d\n", s->hostAck + 1, seq);
+
+                    // dessa stämmer inte?
+                    printf("Expected: %d got: %d or got: %d\n", s->hostSeq + 1, ack, ntohl(ack));
+
+                    printf("Initial numbers: %d, %d\n", s->initialHostSeq, s->initialRemoteSeq);
+
+                    // vi kommer hit utan data nu? skickar vi till oss själva?
+
+                    if (tcpHeader->header.syn) {
+
+                        printf("VI TOG EMOT ETT SYN,ACK!???\n");
+                    }
+
+                    if (tcpHeader->header.rst) {
+
+                        printf("Tog vi emot ett RST?\n");
+                    }
+
+                    // what if we lost the SYN -> SYN_ACK -> [ACK] from the client, followed by next packet which is ACK with data?
+
+                    int tcpdatalen = ntohs(ipHeader->tot_len) - (tcpHeader->header.doff * 4) - (ipHeader->ihl * 4);
+
+                    printf("Server ack is wrong, and we got data? of length: %d\n", tcpdatalen);
                     exit(0);
                 }
 
@@ -291,6 +485,11 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
 
             /* Is this segment out of sequence? */
             uint32_t seq = ntohl(tcpHeader->header.seq);
+
+            /* Simple check: if the difference between the two is very large, then overflow error? */
+            //if ()
+
+
             if (s->hostAck != seq) {
 
                 /* This implementation should rarely see out of orders, since most sends are 1 packet big */
@@ -333,6 +532,13 @@ void us_internal_socket_context_read_tcp(struct us_socket_t *s, struct us_socket
                     exit(0);
                 }
             } else {
+
+                /* If we are about to overflow */
+                if (s->hostAck > UINT32_MAX - 100) {
+                    printf("WE ARE GOING TO FLIP SOON!\n");
+                    exit(0);
+                }
+
                 /* Increase by length of data */
                 s->hostAck += tcpdatalen;
                 uint32_t lastHostSeq = s->hostSeq;

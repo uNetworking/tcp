@@ -60,6 +60,9 @@ struct us_socket_t {
     // largest seq we seen that is out of sync, or 0 if not seen
     uint32_t mostOutOfSync;
 
+    // the initial seq, ack sent in first syn packet to us
+    uint32_t initialRemoteSeq, initialHostSeq;
+
 
     //struct us_socket_t *next;
 

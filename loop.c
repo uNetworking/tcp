@@ -251,12 +251,16 @@ void remove_socket(struct us_socket_t *s) {
 /* We also need to merge this with uSockets and enable TLS over it */
 /* WITH_USERSPACE=1 */
 
+void us_internal_small_tick();
+
 /* We need to have timeout by now, and every tick should print statistics on packet loss */
 void us_loop_run(struct us_loop_t *loop) {
     printf("Getting ip packets now\n");
 
-    int repeat_ms = 4000;
-    int ms = 4000;
+    int repeat_ms = 250;
+    int ms = 250;
+
+    int small_ticks = 0;
 
     struct itimerspec timer_spec = {
         {repeat_ms / 1000, ((long)repeat_ms * 1000000) % 1000000000},
@@ -274,9 +278,14 @@ void us_loop_run(struct us_loop_t *loop) {
             if (events[i].data.u64 == 0) {
                 //printf("Timerfd tick!\n");
 
-                print_statistics(loop);
+                us_internal_small_tick();
 
-                us_internal_timer_sweep(loop);
+                small_ticks++;
+                if (small_ticks == 16) {
+                    //print_statistics(loop);
+                    us_internal_timer_sweep(loop);
+                    small_ticks = 0;
+                }
 
                 uint64_t buf;
                 read(loop->timer, &buf, 8);
@@ -314,6 +323,10 @@ void us_loop_run(struct us_loop_t *loop) {
                     /* Now we know this is tcp */
                     struct TcpHeader *tcpHeader = (struct TcpHeader *) IpHeader_getData(ipHeader);
 
+                    /* OMG! WE DO NOT HANDLE DUPLICATE SYN! PROPERLY!! */
+
+                    // has to be: try and get this socket, in case it exists, handle the segment otherwise crete a new socket for SYN
+
                     /* Is this packet SYN? */
                     if (tcpHeader->header.syn && !tcpHeader->header.ack) {
                         /* Loop over all contexts */
@@ -323,6 +336,21 @@ void us_loop_run(struct us_loop_t *loop) {
 
                                 if (listen_socket->port == TcpHeader_getDestinationPort(tcpHeader)) {
                                     //global_s = 0;
+
+                                    /* NOTE: WE NEED TO CHECK IF OR NOT THIS SOCKET ALREADY EXISTS!!! */
+                                    struct SOCKET_KEY key = {
+                                        TcpHeader_getSourcePort(tcpHeader),
+                                        TcpHeader_getDestinationPort(tcpHeader),
+                                        ipHeader->saddr,
+                                        ipHeader->daddr
+                                    };
+
+                                    struct us_socket_t *s;
+                                    HASH_FIND(hh, sockets, &key, sizeof(struct SOCKET_KEY), s);
+                                    if (s) {
+                                        printf("GOT DUPLICATE SYN!!!!!!\n");
+                                        goto here;
+                                    }
 
                                     us_internal_socket_context_read_tcp(NULL, listen_socket->context, ipHeader, tcpHeader, length);
 
@@ -365,6 +393,9 @@ void us_loop_run(struct us_loop_t *loop) {
                         }
 
                     }
+
+                    here:
+                    continue;
                 }
 
                 releaseSend(loop);
